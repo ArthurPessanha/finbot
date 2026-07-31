@@ -25,7 +25,7 @@ url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
-# ============ TRADUÇÕES COMPLETAS ============
+# ============ TRADUÇÕES COMPLETAS (MANTIDAS) ============
 T = {
   "pt": {
     "title": "FinBot", "subtitle": "Seu assistente financeiro inteligente",
@@ -193,7 +193,7 @@ if st.session_state.lang is None:
 def t(key): return T[st.session_state.lang][key]
 sym = t("currency")
 
-# ========== LOGIN / REGISTRO PROFISSIONAL ==========
+# ========== LOGIN / REGISTRO PROFISSIONAL (CORRIGIDO) ==========
 if not st.session_state.user:
     st.markdown("<style>.stApp{background:#0a0a0a;} .login-box{max-width:420px;margin:8% auto;padding:2.5rem 2rem;background:#1c1c1e;border-radius:20px;box-shadow:0 10px 30px rgba(0,0,0,0.5);} h2{color:#f5f5f7;text-align:center;margin-bottom:1.5rem;} .stTextInput>div>div>input{background:#2c2c2e;border:1px solid #3a3a3c;color:#f5f5f7;border-radius:10px;padding:0.75rem 1rem;} .stButton>button{background:#667eea;color:white;border:none;border-radius:10px;padding:0.8rem;font-weight:600;width:100%;transition:background 0.2s;} .stButton>button:hover{background:#5a6fd6;}</style>", unsafe_allow_html=True)
     with st.container():
@@ -215,7 +215,8 @@ if not st.session_state.user:
                             auth = supabase.auth.sign_in_with_password({"email": email, "password": pwd})
                             st.session_state.user = auth.user
                             st.rerun()
-                        except: st.error(t("login_error"))
+                        except Exception as e:
+                            st.error(f"Erro ao fazer login: {str(e)}")
         with tab2:
             with st.form("register_form"):
                 new_email = st.text_input(t("login_user"), key="reg_email")
@@ -223,15 +224,20 @@ if not st.session_state.user:
                 if st.form_submit_button(t("register_btn")):
                     if not new_email or not new_pwd:
                         st.error(t("fill_all"))
-                    elif "@" not in new_email:
+                    elif "@" not in new_email or "." not in new_email.split("@")[-1]:
                         st.error("Email inválido.")
                     elif len(new_pwd) < 6:
                         st.error("Senha deve ter pelo menos 6 caracteres.")
                     else:
                         try:
-                            supabase.auth.sign_up({"email": new_email, "password": new_pwd})
+                            resp = supabase.auth.sign_up({"email": new_email, "password": new_pwd})
                             st.success(t("register_success"))
-                        except: st.warning(t("username_taken"))
+                        except Exception as e:
+                            error_msg = str(e)
+                            if "already registered" in error_msg.lower() or "user already exists" in error_msg.lower():
+                                st.warning(t("username_taken"))
+                            else:
+                                st.error(f"Erro ao criar conta: {error_msg}")
         st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
@@ -247,7 +253,7 @@ income_total = sum(tx['value'] for tx in transactions if tx['type'] == 'income')
 expense_total = sum(tx['value'] for tx in transactions if tx['type'] == 'expense')
 balance = income_total - expense_total
 
-# ========== CSS ==========
+# ========== CSS (MANTIDO) ==========
 st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -680,4 +686,4 @@ with st.sidebar:
     elif st.session_state.chat_model == "ChatGPT": st.session_state.okey = st.text_input("Chave OpenAI", type="password")
     if st.button("Limpar histórico"): clear_chat(uid); st.session_state.memory = []; st.rerun()
 
-st.markdown(f'<div style="text-align:center;color:#6d6d72;font-size:0.7rem;padding:2rem 0 1rem 0">{t("footer")}</div>', unsafe_allow_html=True) 
+st.markdown(f'<div style="text-align:center;color:#6d6d72;font-size:0.7rem;padding:2rem 0 1rem 0">{t("footer")}</div>', unsafe_allow_html=True)
