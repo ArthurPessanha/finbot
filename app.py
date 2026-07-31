@@ -7,6 +7,8 @@ import plotly.express as px
 from fpdf import FPDF
 import base64, io, time
 from supabase import create_client, Client
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 
 # IAs opcionais
 try:
@@ -25,7 +27,21 @@ url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
-# ============ TRADUÇÕES COMPLETAS (MANTIDAS) ============
+# SendGrid
+SENDGRID_API_KEY = st.secrets.get("SENDGRID_API_KEY", "")
+FROM_EMAIL = st.secrets.get("FROM_EMAIL", "")
+SEND_NOTIFICATIONS = bool(SENDGRID_API_KEY)
+
+def send_email(to_email, subject, body):
+    if not SEND_NOTIFICATIONS: return
+    try:
+        message = Mail(from_email=FROM_EMAIL, to_emails=to_email, subject=subject, html_content=body)
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        sg.send(message)
+    except Exception as e:
+        st.error(f"Erro ao enviar email: {e}")
+
+# ============ TRADUÇÕES COMPLETAS ============
 T = {
   "pt": {
     "title": "FinBot", "subtitle": "Seu assistente financeiro inteligente",
@@ -64,7 +80,8 @@ T = {
     "reminder_description": "Descrição", "reminder_amount": "Valor", "reminder_due_date": "Vencimento",
     "reminder_add": "Adicionar", "reminder_delete": "Excluir",
     "reminder_paid": "Pago", "reminder_pending": "Pendente", "reminder_overdue": "Vencido!",
-    "no_reminders": "Nenhum lembrete.", "clear_reminders": "Limpar todos"
+    "no_reminders": "Nenhum lembrete.", "clear_reminders": "Limpar todos",
+    "send_resume": "Enviar resumo por email"
   },
   "en": {
     "title": "FinBot", "subtitle": "Your intelligent financial assistant",
@@ -103,11 +120,12 @@ T = {
     "reminder_description": "Description", "reminder_amount": "Amount", "reminder_due_date": "Due date",
     "reminder_add": "Add", "reminder_delete": "Delete",
     "reminder_paid": "Paid", "reminder_pending": "Pending", "reminder_overdue": "Overdue!",
-    "no_reminders": "No reminders.", "clear_reminders": "Clear all"
+    "no_reminders": "No reminders.", "clear_reminders": "Clear all",
+    "send_resume": "Send summary by email"
   }
 }
 
-# ========== FUNÇÕES SUPABASE (MANTIDAS) ==========
+# ========== FUNÇÕES SUPABASE ==========
 def load_transactions(uid):
     r = supabase.table("transactions").select("*").eq("user_id", uid).order("date", desc=True).execute()
     data = r.data or []
@@ -179,6 +197,8 @@ if 'user' not in st.session_state: st.session_state.user = None
 if 'chat_model' not in st.session_state: st.session_state.chat_model = "Offline"
 if 'show_chat' not in st.session_state: st.session_state.show_chat = False
 if 'memory' not in st.session_state: st.session_state.memory = []
+if 'budget_emailed' not in st.session_state: st.session_state.budget_emailed = set()
+if 'reminder_email_sent' not in st.session_state: st.session_state.reminder_email_sent = False
 
 # ========== IDIOMA ==========
 if st.session_state.lang is None:
@@ -193,7 +213,7 @@ if st.session_state.lang is None:
 def t(key): return T[st.session_state.lang][key]
 sym = t("currency")
 
-# ========== LOGIN / REGISTRO PROFISSIONAL (CORRIGIDO) ==========
+# ========== LOGIN / REGISTRO ==========
 if not st.session_state.user:
     st.markdown("<style>.stApp{background:#0a0a0a;} .login-box{max-width:420px;margin:8% auto;padding:2.5rem 2rem;background:#1c1c1e;border-radius:20px;box-shadow:0 10px 30px rgba(0,0,0,0.5);} h2{color:#f5f5f7;text-align:center;margin-bottom:1.5rem;} .stTextInput>div>div>input{background:#2c2c2e;border:1px solid #3a3a3c;color:#f5f5f7;border-radius:10px;padding:0.75rem 1rem;} .stButton>button{background:#667eea;color:white;border:none;border-radius:10px;padding:0.8rem;font-weight:600;width:100%;transition:background 0.2s;} .stButton>button:hover{background:#5a6fd6;}</style>", unsafe_allow_html=True)
     with st.container():
@@ -204,45 +224,37 @@ if not st.session_state.user:
                 email = st.text_input(t("login_user"))
                 pwd = st.text_input(t("login_pass"), type="password")
                 if st.form_submit_button(t("login_btn")):
-                    if not email or not pwd:
-                        st.error(t("fill_all"))
-                    elif "@" not in email:
-                        st.error("Email inválido.")
-                    elif len(pwd) < 6:
-                        st.error("Senha deve ter pelo menos 6 caracteres.")
+                    if not email or not pwd: st.error(t("fill_all"))
+                    elif "@" not in email: st.error("Email inválido.")
+                    elif len(pwd) < 6: st.error("Senha deve ter pelo menos 6 caracteres.")
                     else:
                         try:
                             auth = supabase.auth.sign_in_with_password({"email": email, "password": pwd})
                             st.session_state.user = auth.user
                             st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao fazer login: {str(e)}")
+                        except Exception as e: st.error(f"Erro: {str(e)}")
         with tab2:
             with st.form("register_form"):
                 new_email = st.text_input(t("login_user"), key="reg_email")
                 new_pwd = st.text_input(t("login_pass"), type="password", key="reg_pwd")
                 if st.form_submit_button(t("register_btn")):
-                    if not new_email or not new_pwd:
-                        st.error(t("fill_all"))
-                    elif "@" not in new_email or "." not in new_email.split("@")[-1]:
-                        st.error("Email inválido.")
-                    elif len(new_pwd) < 6:
-                        st.error("Senha deve ter pelo menos 6 caracteres.")
+                    if not new_email or not new_pwd: st.error(t("fill_all"))
+                    elif "@" not in new_email or "." not in new_email.split("@")[-1]: st.error("Email inválido.")
+                    elif len(new_pwd) < 6: st.error("Senha deve ter pelo menos 6 caracteres.")
                     else:
                         try:
-                            resp = supabase.auth.sign_up({"email": new_email, "password": new_pwd})
+                            supabase.auth.sign_up({"email": new_email, "password": new_pwd})
                             st.success(t("register_success"))
                         except Exception as e:
                             error_msg = str(e)
-                            if "already registered" in error_msg.lower() or "user already exists" in error_msg.lower():
-                                st.warning(t("username_taken"))
-                            else:
-                                st.error(f"Erro ao criar conta: {error_msg}")
+                            if "already registered" in error_msg.lower(): st.warning(t("username_taken"))
+                            else: st.error(f"Erro: {error_msg}")
         st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
 # ========== DADOS DO USUÁRIO ==========
 uid = st.session_state.user.id
+user_email = st.session_state.user.email
 transactions = load_transactions(uid)
 budgets = load_budgets(uid)
 goal = load_goal(uid)
@@ -253,7 +265,16 @@ income_total = sum(tx['value'] for tx in transactions if tx['type'] == 'income')
 expense_total = sum(tx['value'] for tx in transactions if tx['type'] == 'expense')
 balance = income_total - expense_total
 
-# ========== CSS (MANTIDO) ==========
+# ========== NOTIFICAÇÕES AUTOMÁTICAS ==========
+if reminders and SEND_NOTIFICATIONS:
+    overdue = [r for r in reminders if r['due_date'] < datetime.now().date() and not r['paid']]
+    if overdue and not st.session_state.reminder_email_sent:
+        items = "".join(f"<li>{r['description']}: {sym} {r['amount']:.2f} (vencido em {r['due_date'].strftime('%d/%m/%Y')})</li>" for r in overdue)
+        body = f"<h3>🔔 Contas vencidas</h3><p>Você tem {len(overdue)} contas em atraso:</p><ul>{items}</ul>"
+        send_email(user_email, "Contas vencidas - FinBot", body)
+        st.session_state.reminder_email_sent = True
+
+# ========== CSS ==========
 st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -394,48 +415,62 @@ def export_pdf(lang):
     b64 = base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode()
     return f'<a href="data:application/pdf;base64,{b64}" download="finbot_{lang}.pdf" style="color:#f5f5f7;text-decoration:none;background:#2c2c2e;padding:0.5rem 1rem;border-radius:8px;">📥 {T[lang]["export_pdf_pt"] if lang=="pt" else T[lang]["export_pdf_en"]}</a>'
 
-def chat_response(prompt, model, key):
+def stream_response(prompt, model, key):
+    """Generator para streaming do chat."""
+    # Se for IA offline, retorna a resposta inteira
+    if model == "Offline" or not key:
+        # Resposta offline (baseada nos dados do usuário)
+        df = pd.DataFrame(transactions) if transactions else pd.DataFrame()
+        exp = df[df['type']=='expense'] if not df.empty else pd.DataFrame()
+        p = prompt.lower()
+        if any(w in p for w in ["saldo","balance"]): text = f"Saldo: {sym} {balance:,.2f}. " + ("Positivo!" if balance>=0 else "Negativo!")
+        elif any(w in p for w in ["gasto","despesa","spent"]):
+            if exp.empty: text = "Sem despesas."
+            else: text = f"Total gasto: {sym} {exp['value'].sum():,.2f}. Maior: {exp.groupby('category')['value'].sum().idxmax()}."
+        elif any(w in p for w in ["economizar","save"]):
+            if exp.empty: text = "Registre despesas."
+            else: text = f"Reduza gastos com {exp.groupby('category')['value'].sum().idxmax()}."
+        elif any(w in p for w in ["investir","invest"]): text = "Invista em renda fixa (Tesouro Direto, CDB). Mantenha reserva de emergência."
+        elif any(w in p for w in ["orçamento","budget"]):
+            if not budgets: text = "Defina orçamentos na aba Orçamentos."
+            else:
+                msg = "Orçamentos:\n"
+                for cat, lim in budgets.items():
+                    spent = exp[exp['category']==cat]['value'].sum() if not exp.empty else 0
+                    msg += f"- {cat}: {sym} {spent:,.2f} de {sym} {lim:,.2f} ({(spent/lim)*100:.0f}%)\n" if lim>0 else f"- {cat}: sem limite\n"
+                text = msg
+        elif any(w in p for w in ["meta","goal"]):
+            if not goal: text = "Nenhuma meta definida."
+            else:
+                saved = balance if balance>0 else 0
+                prog = min(saved/goal['amount']*100,100) if goal['amount']>0 else 0
+                days = max((goal['deadline']-datetime.now().date()).days,0)
+                text = f"Meta: {sym} {goal['amount']:,.2f}. Progresso: {prog:.1f}%. {days} dias restantes."
+        else: text = "Pergunte sobre saldo, gastos, economia, investimentos, orçamentos ou metas!"
+        # Simula streaming caractere por caractere
+        for i in range(len(text)):
+            yield text[:i+1]
+            time.sleep(0.02)
+        return
+
+    # Resposta com IA (Gemini/ChatGPT) - sem streaming real, mas simulamos
     mem = st.session_state.memory[-5:]
     ctx = "".join(f"{m['role']}: {m['content']}\n" for m in mem) + f"User: {prompt}\nAssistant:"
     if model == "Gemini" and key and GEMINI:
         genai.configure(api_key=key)
-        return genai.GenerativeModel('gemini-pro').generate_content(ctx).text
+        resp = genai.GenerativeModel('gemini-pro').generate_content(ctx).text
     elif model == "ChatGPT" and key and OPENAI:
         openai.api_key = key
         msgs = [{"role":"system","content":"Consultor financeiro amigável."}]
         for m in mem: msgs.append({"role":m['role'],"content":m['content']})
         msgs.append({"role":"user","content":prompt})
-        return openai.ChatCompletion.create(model="gpt-3.5-turbo",messages=msgs,max_tokens=200).choices[0].message.content
-    else:
-        df = pd.DataFrame(transactions) if transactions else pd.DataFrame()
-        exp = df[df['type']=='expense'] if not df.empty else pd.DataFrame()
-        p = prompt.lower()
-        if any(w in p for w in ["saldo","balance"]): return f"Saldo: {sym} {balance:,.2f}. " + ("Positivo!" if balance>=0 else "Negativo!")
-        if any(w in p for w in ["gasto","despesa","spent"]):
-            if exp.empty: return "Sem despesas."
-            top = exp.groupby('category')['value'].sum().idxmax()
-            return f"Total gasto: {sym} {exp['value'].sum():,.2f}. Maior: {top}."
-        if any(w in p for w in ["economizar","save"]):
-            if exp.empty: return "Registre despesas."
-            top = exp.groupby('category')['value'].sum().idxmax()
-            return f"Reduza gastos com {top}."
-        if any(w in p for w in ["investir","invest"]): return "Invista em renda fixa (Tesouro Direto, CDB). Mantenha reserva de emergência."
-        if any(w in p for w in ["orçamento","budget"]):
-            if not budgets: return "Defina orçamentos na aba Orçamentos."
-            msg = "Orçamentos:\n"
-            for cat, lim in budgets.items():
-                spent = exp[exp['category']==cat]['value'].sum() if not exp.empty else 0
-                msg += f"- {cat}: {sym} {spent:,.2f} de {sym} {lim:,.2f} ({(spent/lim)*100:.0f}%)\n" if lim>0 else f"- {cat}: sem limite\n"
-            return msg
-        if any(w in p for w in ["meta","goal"]):
-            if not goal: return "Nenhuma meta definida."
-            saved = balance if balance>0 else 0
-            prog = min(saved/goal['amount']*100,100) if goal['amount']>0 else 0
-            days = max((goal['deadline']-datetime.now().date()).days,0)
-            return f"Meta: {sym} {goal['amount']:,.2f}. Progresso: {prog:.1f}%. {days} dias restantes."
-        return "Pergunte sobre saldo, gastos, economia, investimentos, orçamentos ou metas!"
+        resp = openai.ChatCompletion.create(model="gpt-3.5-turbo",messages=msgs,max_tokens=200).choices[0].message.content
+    else: resp = "Modelo não disponível."
+    for i in range(len(resp)):
+        yield resp[:i+1]
+        time.sleep(0.02)
 
-# ========== INTERFACE (IDÊNTICA AO ÚLTIMO FUNCIONAL) ==========
+# ========== INTERFACE ==========
 col1, col2 = st.columns([4,1])
 with col1:
     st.markdown(f'<div class="logo-area"><div class="robot-logo">🤖</div><div><h1>{t("title")}</h1><div class="subtitle">{t("subtitle")}</div></div></div>', unsafe_allow_html=True)
@@ -524,11 +559,15 @@ with tabs[1]:
         c1.markdown(f'<div class="metric-card income"><div class="metric-label">Receita Anual</div><div class="metric-value">{sym} {y_inc:,.2f}</div></div>', unsafe_allow_html=True)
         c2.markdown(f'<div class="metric-card expense"><div class="metric-label">Despesa Anual</div><div class="metric-value">{sym} {y_exp:,.2f}</div></div>', unsafe_allow_html=True)
         c3.markdown(f'<div class="metric-card balance"><div class="metric-label">Saldo Anual</div><div class="metric-value" style="color:{"#30d158" if y_bal>=0 else "#ff453a"}">{sym} {y_bal:,.2f}</div></div>', unsafe_allow_html=True)
-        # Alertas
+        # Alertas de orçamento + email
         for cat, lim in budgets.items():
             spent = exp[exp['category']==cat]['value'].sum() if not exp.empty else 0
             if lim>0 and spent>lim:
                 st.markdown(f'<div class="metric-card expense alert-budget"><div class="metric-label">{t("alert_budget")} {cat}</div><div class="metric-value" style="font-size:1.2rem">{sym} {spent:,.2f} / {sym} {lim:,.2f}</div></div>', unsafe_allow_html=True)
+                if SEND_NOTIFICATIONS and cat not in st.session_state.budget_emailed:
+                    body = f"<h3>⚠️ Orçamento estourado!</h3><p>A categoria <b>{cat}</b> ultrapassou o limite de {sym} {lim:,.2f}.</p><p>Gasto atual: {sym} {spent:,.2f}</p>"
+                    send_email(user_email, f"Alerta de orçamento - {cat}", body)
+                    st.session_state.budget_emailed.add(cat)
     else: st.info(t("no_data"))
 
 # ABA ORÇAMENTOS
@@ -636,7 +675,7 @@ with tabs[7]:
                 if st.button("🗑️", key=f"del_{tx['id']}"): delete_transaction(tx['id']); st.rerun()
     else: st.info(t("no_transactions"))
 
-# ========== CHAT ==========
+# ========== CHAT COM STREAMING ==========
 st.markdown('<button class="chat-fab" id="chatFab"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="9" cy="10" r="1.5" fill="white"/><circle cx="15" cy="10" r="1.5" fill="white"/></svg></button>', unsafe_allow_html=True)
 st.markdown("""
 <script>
@@ -653,19 +692,32 @@ disp = 'flex' if st.session_state.show_chat else 'none'
 st.markdown(f'<div class="chat-popup" id="chatPopup" style="display:{disp}">', unsafe_allow_html=True)
 st.markdown(f'<div class="chat-header"><span>{t("chat_title")}</span><span style="cursor:pointer" onclick="document.getElementById(\'chatPopup\').style.display=\'none\'">✕</span></div>', unsafe_allow_html=True)
 st.markdown('<div class="chat-body">', unsafe_allow_html=True)
+
+# Histórico
 for msg in chat_history:
     cls = "user-msg" if msg["role"]=="user" else "bot-msg"
     st.markdown(f'<div class="message-bubble {cls}">{msg["content"]}</div>', unsafe_allow_html=True)
+
+# Sugestões
 st.markdown('<div class="chat-suggestions">', unsafe_allow_html=True)
 for sug in t("chat_suggestions"):
     if st.button(sug, key=f"sug_{sug}"):
         st.session_state.memory.append({"role":"user","content":sug})
         save_chat(uid, "user", sug)
-        resp = chat_response(sug, st.session_state.chat_model, st.session_state.get("gkey","") or st.session_state.get("okey",""))
-        st.session_state.memory.append({"role":"assistant","content":resp})
-        save_chat(uid, "assistant", resp)
+        with st.spinner(""):
+            # Streaming: acumula a resposta e salva no banco
+            full_resp = ""
+            placeholder = st.empty()
+            for chunk in stream_response(sug, st.session_state.chat_model, st.session_state.get("gkey","") or st.session_state.get("okey","")):
+                full_resp = chunk
+                placeholder.markdown(f'<div class="message-bubble bot-msg">{chunk}</div>', unsafe_allow_html=True)
+            st.session_state.memory.append({"role":"assistant","content":full_resp})
+            save_chat(uid, "assistant", full_resp)
         st.rerun()
-st.markdown('</div></div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
+
+# Input de chat
 st.markdown('<div class="chat-input-container">', unsafe_allow_html=True)
 with st.form(key="cform", clear_on_submit=True):
     c1,c2 = st.columns([5,1])
@@ -673,17 +725,34 @@ with st.form(key="cform", clear_on_submit=True):
     if c2.form_submit_button("➤") and inp:
         st.session_state.memory.append({"role":"user","content":inp})
         save_chat(uid, "user", inp)
-        resp = chat_response(inp, st.session_state.chat_model, st.session_state.get("gkey","") or st.session_state.get("okey",""))
-        st.session_state.memory.append({"role":"assistant","content":resp})
-        save_chat(uid, "assistant", resp)
+        with st.spinner(""):
+            full_resp = ""
+            placeholder = st.empty()
+            for chunk in stream_response(inp, st.session_state.chat_model, st.session_state.get("gkey","") or st.session_state.get("okey","")):
+                full_resp = chunk
+                placeholder.markdown(f'<div class="message-bubble bot-msg">{chunk}</div>', unsafe_allow_html=True)
+            st.session_state.memory.append({"role":"assistant","content":full_resp})
+            save_chat(uid, "assistant", full_resp)
         st.rerun()
-st.markdown('</div></div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
+# Sidebar
 with st.sidebar:
     st.markdown("### Configuração do Chat")
     st.session_state.chat_model = st.selectbox("Modelo", ["Offline","Gemini","ChatGPT"], index=0)
     if st.session_state.chat_model == "Gemini": st.session_state.gkey = st.text_input("Chave Gemini", type="password")
     elif st.session_state.chat_model == "ChatGPT": st.session_state.okey = st.text_input("Chave OpenAI", type="password")
     if st.button("Limpar histórico"): clear_chat(uid); st.session_state.memory = []; st.rerun()
+    if st.button(t("send_resume")):
+        if SEND_NOTIFICATIONS:
+            body = f"<h2>FinBot - Resumo Financeiro</h2><p>Saldo: {sym} {balance:,.2f}</p><p>Receitas: {sym} {income_total:,.2f}</p><p>Despesas: {sym} {expense_total:,.2f}</p>"
+            if goal:
+                saved = balance if balance>0 else 0
+                prog = min(saved/goal['amount']*100,100) if goal['amount']>0 else 0
+                body += f"<p>Meta: {sym} {goal['amount']:,.2f} ({prog:.1f}%)</p>"
+            send_email(user_email, "Resumo Financeiro - FinBot", body)
+            st.success("Email enviado!")
+        else: st.error("SendGrid não configurado.")
 
 st.markdown(f'<div style="text-align:center;color:#6d6d72;font-size:0.7rem;padding:2rem 0 1rem 0">{t("footer")}</div>', unsafe_allow_html=True)
