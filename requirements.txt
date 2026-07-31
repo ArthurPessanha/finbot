@@ -4,8 +4,7 @@ numpy
 plotly
 fpdf
 supabase
-google-generativeai
+python-dotenv
 openai
-scikit-learn
+google-generativeai
 sendgrid
-sendgrid==6.12.5
