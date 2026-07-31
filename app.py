@@ -7,18 +7,27 @@ import plotly.express as px
 from fpdf import FPDF
 import base64, io, time
 from supabase import create_client, Client
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
 
-# IAs opcionais
+# ============ IAs OPCIONAIS ============
 try:
     import google.generativeai as genai
     GEMINI = True
-except: GEMINI = False
+except ImportError:
+    GEMINI = False
+
 try:
     import openai
     OPENAI = True
-except: OPENAI = False
+except ImportError:
+    OPENAI = False
+
+# ============ SENDGRID OPCIONAL ============
+try:
+    from sendgrid import SendGridAPIClient
+    from sendgrid.helpers.mail import Mail
+    SENDGRID_AVAILABLE = True
+except ImportError:
+    SENDGRID_AVAILABLE = False
 
 st.set_page_config(page_title="FinBot", page_icon="🤖", layout="wide")
 
@@ -30,10 +39,11 @@ supabase: Client = create_client(url, key)
 # SendGrid
 SENDGRID_API_KEY = st.secrets.get("SENDGRID_API_KEY", "")
 FROM_EMAIL = st.secrets.get("FROM_EMAIL", "")
-SEND_NOTIFICATIONS = bool(SENDGRID_API_KEY)
+SEND_NOTIFICATIONS = SENDGRID_AVAILABLE and bool(SENDGRID_API_KEY)
 
 def send_email(to_email, subject, body):
-    if not SEND_NOTIFICATIONS: return
+    if not SEND_NOTIFICATIONS:
+        return
     try:
         message = Mail(from_email=FROM_EMAIL, to_emails=to_email, subject=subject, html_content=body)
         sg = SendGridAPIClient(SENDGRID_API_KEY)
@@ -41,7 +51,7 @@ def send_email(to_email, subject, body):
     except Exception as e:
         st.error(f"Erro ao enviar email: {e}")
 
-# ============ TRADUÇÕES COMPLETAS ============
+# ============ TRADUÇÕES ============
 T = {
   "pt": {
     "title": "FinBot", "subtitle": "Seu assistente financeiro inteligente",
@@ -417,9 +427,7 @@ def export_pdf(lang):
 
 def stream_response(prompt, model, key):
     """Generator para streaming do chat."""
-    # Se for IA offline, retorna a resposta inteira
     if model == "Offline" or not key:
-        # Resposta offline (baseada nos dados do usuário)
         df = pd.DataFrame(transactions) if transactions else pd.DataFrame()
         exp = df[df['type']=='expense'] if not df.empty else pd.DataFrame()
         p = prompt.lower()
@@ -447,13 +455,11 @@ def stream_response(prompt, model, key):
                 days = max((goal['deadline']-datetime.now().date()).days,0)
                 text = f"Meta: {sym} {goal['amount']:,.2f}. Progresso: {prog:.1f}%. {days} dias restantes."
         else: text = "Pergunte sobre saldo, gastos, economia, investimentos, orçamentos ou metas!"
-        # Simula streaming caractere por caractere
         for i in range(len(text)):
             yield text[:i+1]
             time.sleep(0.02)
         return
 
-    # Resposta com IA (Gemini/ChatGPT) - sem streaming real, mas simulamos
     mem = st.session_state.memory[-5:]
     ctx = "".join(f"{m['role']}: {m['content']}\n" for m in mem) + f"User: {prompt}\nAssistant:"
     if model == "Gemini" and key and GEMINI:
@@ -693,19 +699,16 @@ st.markdown(f'<div class="chat-popup" id="chatPopup" style="display:{disp}">', u
 st.markdown(f'<div class="chat-header"><span>{t("chat_title")}</span><span style="cursor:pointer" onclick="document.getElementById(\'chatPopup\').style.display=\'none\'">✕</span></div>', unsafe_allow_html=True)
 st.markdown('<div class="chat-body">', unsafe_allow_html=True)
 
-# Histórico
 for msg in chat_history:
     cls = "user-msg" if msg["role"]=="user" else "bot-msg"
     st.markdown(f'<div class="message-bubble {cls}">{msg["content"]}</div>', unsafe_allow_html=True)
 
-# Sugestões
 st.markdown('<div class="chat-suggestions">', unsafe_allow_html=True)
 for sug in t("chat_suggestions"):
     if st.button(sug, key=f"sug_{sug}"):
         st.session_state.memory.append({"role":"user","content":sug})
         save_chat(uid, "user", sug)
         with st.spinner(""):
-            # Streaming: acumula a resposta e salva no banco
             full_resp = ""
             placeholder = st.empty()
             for chunk in stream_response(sug, st.session_state.chat_model, st.session_state.get("gkey","") or st.session_state.get("okey","")):
@@ -717,7 +720,6 @@ for sug in t("chat_suggestions"):
 st.markdown('</div>', unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
-# Input de chat
 st.markdown('<div class="chat-input-container">', unsafe_allow_html=True)
 with st.form(key="cform", clear_on_submit=True):
     c1,c2 = st.columns([5,1])
@@ -737,7 +739,6 @@ with st.form(key="cform", clear_on_submit=True):
 st.markdown('</div>', unsafe_allow_html=True)
 st.markdown('</div>', unsafe_allow_html=True)
 
-# Sidebar
 with st.sidebar:
     st.markdown("### Configuração do Chat")
     st.session_state.chat_model = st.selectbox("Modelo", ["Offline","Gemini","ChatGPT"], index=0)
