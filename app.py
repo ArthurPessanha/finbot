@@ -25,7 +25,7 @@ url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
-# Traduções completas
+# ============ TRADUÇÕES COMPLETAS ============
 T = {
   "pt": {
     "title": "FinBot", "subtitle": "Seu assistente financeiro inteligente",
@@ -107,7 +107,7 @@ T = {
   }
 }
 
-# ========== FUNÇÕES SUPABASE ==========
+# ========== FUNÇÕES SUPABASE (MANTIDAS) ==========
 def load_transactions(uid):
     r = supabase.table("transactions").select("*").eq("user_id", uid).order("date", desc=True).execute()
     data = r.data or []
@@ -193,29 +193,46 @@ if st.session_state.lang is None:
 def t(key): return T[st.session_state.lang][key]
 sym = t("currency")
 
-# ========== LOGIN ==========
+# ========== LOGIN / REGISTRO PROFISSIONAL ==========
 if not st.session_state.user:
-    st.markdown("<style>.stApp{background:#0a0a0a;}</style>", unsafe_allow_html=True)
+    st.markdown("<style>.stApp{background:#0a0a0a;} .login-box{max-width:420px;margin:8% auto;padding:2.5rem 2rem;background:#1c1c1e;border-radius:20px;box-shadow:0 10px 30px rgba(0,0,0,0.5);} h2{color:#f5f5f7;text-align:center;margin-bottom:1.5rem;} .stTextInput>div>div>input{background:#2c2c2e;border:1px solid #3a3a3c;color:#f5f5f7;border-radius:10px;padding:0.75rem 1rem;} .stButton>button{background:#667eea;color:white;border:none;border-radius:10px;padding:0.8rem;font-weight:600;width:100%;transition:background 0.2s;} .stButton>button:hover{background:#5a6fd6;}</style>", unsafe_allow_html=True)
     with st.container():
-        st.markdown(f"<h2 style='text-align:center;color:#f5f5f7;'>🤖 {t('login_title')}</h2>", unsafe_allow_html=True)
+        st.markdown(f'<div class="login-box"><h2>🤖 {t("login_title")}</h2>', unsafe_allow_html=True)
         tab1, tab2 = st.tabs(["Login", "Registrar"])
         with tab1:
-            email = st.text_input(t("login_user"))
-            pwd = st.text_input(t("login_pass"), type="password")
-            if st.button(t("login_btn"), use_container_width=True):
-                try:
-                    auth = supabase.auth.sign_in_with_password({"email": email, "password": pwd})
-                    st.session_state.user = auth.user
-                    st.rerun()
-                except: st.error(t("login_error"))
+            with st.form("login_form"):
+                email = st.text_input(t("login_user"))
+                pwd = st.text_input(t("login_pass"), type="password")
+                if st.form_submit_button(t("login_btn")):
+                    if not email or not pwd:
+                        st.error(t("fill_all"))
+                    elif "@" not in email:
+                        st.error("Email inválido.")
+                    elif len(pwd) < 6:
+                        st.error("Senha deve ter pelo menos 6 caracteres.")
+                    else:
+                        try:
+                            auth = supabase.auth.sign_in_with_password({"email": email, "password": pwd})
+                            st.session_state.user = auth.user
+                            st.rerun()
+                        except: st.error(t("login_error"))
         with tab2:
-            new_email = st.text_input(t("login_user"), key="reg_email")
-            new_pwd = st.text_input(t("login_pass"), type="password", key="reg_pwd")
-            if st.button(t("register_btn"), use_container_width=True):
-                try:
-                    supabase.auth.sign_up({"email": new_email, "password": new_pwd})
-                    st.success(t("register_success"))
-                except: st.warning(t("username_taken"))
+            with st.form("register_form"):
+                new_email = st.text_input(t("login_user"), key="reg_email")
+                new_pwd = st.text_input(t("login_pass"), type="password", key="reg_pwd")
+                if st.form_submit_button(t("register_btn")):
+                    if not new_email or not new_pwd:
+                        st.error(t("fill_all"))
+                    elif "@" not in new_email:
+                        st.error("Email inválido.")
+                    elif len(new_pwd) < 6:
+                        st.error("Senha deve ter pelo menos 6 caracteres.")
+                    else:
+                        try:
+                            supabase.auth.sign_up({"email": new_email, "password": new_pwd})
+                            st.success(t("register_success"))
+                        except: st.warning(t("username_taken"))
+        st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
 # ========== DADOS DO USUÁRIO ==========
@@ -412,7 +429,7 @@ def chat_response(prompt, model, key):
             return f"Meta: {sym} {goal['amount']:,.2f}. Progresso: {prog:.1f}%. {days} dias restantes."
         return "Pergunte sobre saldo, gastos, economia, investimentos, orçamentos ou metas!"
 
-# ========== INTERFACE ==========
+# ========== INTERFACE (IDÊNTICA AO ÚLTIMO FUNCIONAL) ==========
 col1, col2 = st.columns([4,1])
 with col1:
     st.markdown(f'<div class="logo-area"><div class="robot-logo">🤖</div><div><h1>{t("title")}</h1><div class="subtitle">{t("subtitle")}</div></div></div>', unsafe_allow_html=True)
@@ -663,4 +680,6 @@ with st.sidebar:
     elif st.session_state.chat_model == "ChatGPT": st.session_state.okey = st.text_input("Chave OpenAI", type="password")
     if st.button("Limpar histórico"): clear_chat(uid); st.session_state.memory = []; st.rerun()
 
-st.markdown(f'<div style="text-align:center;color:#6d6d72;font-size:0.7rem;padding:2rem 0 1rem 0">{t("footer")}</div>', unsafe_allow_html=True)
+st.markdown(f'<div style="text-align:center;color:#6d6d72;font-size:0.7rem;padding:2rem 0 1rem 0">{t("footer")}</div>', unsafe_allow_html=True)git add app.py
+git commit -m "Login profissional com validação de email e senha"
+git push origin main
