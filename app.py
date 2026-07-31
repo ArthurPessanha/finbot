@@ -8,54 +8,50 @@ from fpdf import FPDF
 import base64, io, time
 from supabase import create_client, Client
 
-# ============ IAs OPCIONAIS ============
+# IAs opcionais
 try:
     import google.generativeai as genai
     GEMINI = True
-except ImportError:
-    GEMINI = False
-
+except: GEMINI = False
 try:
     import openai
     OPENAI = True
-except ImportError:
-    OPENAI = False
+except: OPENAI = False
 
-# ============ SENDGRID OPCIONAL ============
+# SendGrid opcional
 try:
     from sendgrid import SendGridAPIClient
     from sendgrid.helpers.mail import Mail
     SENDGRID_AVAILABLE = True
-except ImportError:
-    SENDGRID_AVAILABLE = False
+except: SENDGRID_AVAILABLE = False
 
 st.set_page_config(page_title="FinBot", page_icon="🤖", layout="wide")
 
-# Supabase
 url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
-# SendGrid
 SENDGRID_API_KEY = st.secrets.get("SENDGRID_API_KEY", "")
 FROM_EMAIL = st.secrets.get("FROM_EMAIL", "")
 SEND_NOTIFICATIONS = SENDGRID_AVAILABLE and bool(SENDGRID_API_KEY)
 
 def send_email(to_email, subject, body):
-    if not SEND_NOTIFICATIONS or not st.session_state.get("email_enabled", True):
-        return
+    if not SEND_NOTIFICATIONS:
+        return False
     try:
         message = Mail(from_email=FROM_EMAIL, to_emails=to_email, subject=subject, html_content=body)
         sg = SendGridAPIClient(SENDGRID_API_KEY)
         sg.send(message)
+        return True
     except Exception as e:
         error_msg = str(e)
         if "rate limit" in error_msg.lower():
             st.toast("⚠️ Cota de emails excedida. Tente novamente mais tarde.", icon="📧")
         else:
             st.error(f"Erro ao enviar email: {e}")
+        return False
 
-# ============ TRADUÇÕES ============
+# Traduções completas (mantidas)
 T = {
   "pt": {
     "title": "FinBot", "subtitle": "Seu assistente financeiro inteligente",
@@ -213,9 +209,7 @@ if 'user' not in st.session_state: st.session_state.user = None
 if 'chat_model' not in st.session_state: st.session_state.chat_model = "Offline"
 if 'show_chat' not in st.session_state: st.session_state.show_chat = False
 if 'memory' not in st.session_state: st.session_state.memory = []
-if 'budget_emailed_today' not in st.session_state: st.session_state.budget_emailed_today = {}
-if 'reminder_email_sent' not in st.session_state: st.session_state.reminder_email_sent = False
-if 'email_enabled' not in st.session_state: st.session_state.email_enabled = True
+if 'email_sent' not in st.session_state: st.session_state.email_sent = False  # controle do botão manual
 
 # ========== IDIOMA ==========
 if st.session_state.lang is None:
@@ -281,15 +275,6 @@ reminders = load_reminders(uid)
 income_total = sum(tx['value'] for tx in transactions if tx['type'] == 'income')
 expense_total = sum(tx['value'] for tx in transactions if tx['type'] == 'expense')
 balance = income_total - expense_total
-
-# ========== NOTIFICAÇÕES AUTOMÁTICAS (CONTROLADAS) ==========
-if reminders and SEND_NOTIFICATIONS and st.session_state.email_enabled:
-    overdue = [r for r in reminders if r['due_date'] < datetime.now().date() and not r['paid']]
-    if overdue and not st.session_state.reminder_email_sent:
-        items = "".join(f"<li>{r['description']}: {sym} {r['amount']:.2f} (vencido em {r['due_date'].strftime('%d/%m/%Y')})</li>" for r in overdue)
-        body = f"<h3>🔔 Contas vencidas</h3><p>Você tem {len(overdue)} contas em atraso:</p><ul>{items}</ul>"
-        send_email(user_email, "Contas vencidas - FinBot", body)
-        st.session_state.reminder_email_sent = True
 
 # ========== CSS ==========
 st.markdown(f"""
@@ -433,7 +418,6 @@ def export_pdf(lang):
     return f'<a href="data:application/pdf;base64,{b64}" download="finbot_{lang}.pdf" style="color:#f5f5f7;text-decoration:none;background:#2c2c2e;padding:0.5rem 1rem;border-radius:8px;">📥 {T[lang]["export_pdf_pt"] if lang=="pt" else T[lang]["export_pdf_en"]}</a>'
 
 def stream_response(prompt, model, key):
-    """Generator para streaming do chat."""
     if model == "Offline" or not key:
         df = pd.DataFrame(transactions) if transactions else pd.DataFrame()
         exp = df[df['type']=='expense'] if not df.empty else pd.DataFrame()
@@ -536,7 +520,6 @@ with tabs[1]:
             fig.update_layout(height=300, margin=dict(l=0,r=100,t=20,b=20), template='plotly_dark', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar':False})
         else: st.info(t("no_expenses"))
-        # Comparativo mensal
         st.markdown(f'<p class="card-title">{t("monthly_comparison")}</p>', unsafe_allow_html=True)
         df['month'] = df['date'].dt.to_period('M').astype(str)
         inc_m = df[df['type']=='income'].groupby('month')['value'].sum()
@@ -547,7 +530,6 @@ with tabs[1]:
         fig2.add_trace(go.Bar(name=t('expenses'), x=meses, y=[exp_m.get(m,0) for m in meses], marker=dict(color='#ff453a')))
         fig2.update_layout(barmode='group', height=300, template='plotly_dark', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
         st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar':False})
-        # Previsão
         if not exp.empty:
             st.markdown(f'<p class="card-title">{t("forecast")}</p>', unsafe_allow_html=True)
             daily = exp.set_index('date').resample('D')['value'].sum().reset_index()
@@ -563,7 +545,6 @@ with tabs[1]:
                 fig3.add_trace(go.Scatter(x=[daily['date'].min()+timedelta(days=int(d)) for d in fut.flatten()], y=preds, mode='lines', name='Tendência', line=dict(dash='dash',color='#667eea')))
                 fig3.update_layout(height=250, template='plotly_dark', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
                 st.plotly_chart(fig3, use_container_width=True, config={'displayModeBar':False})
-        # Resumo anual
         st.markdown(f'<p class="card-title">{t("annual_summary")}</p>', unsafe_allow_html=True)
         y_inc = df[(df['type']=='income')&(df['date'].dt.year==datetime.now().year)]['value'].sum()
         y_exp = df[(df['type']=='expense')&(df['date'].dt.year==datetime.now().year)]['value'].sum()
@@ -572,21 +553,10 @@ with tabs[1]:
         c1.markdown(f'<div class="metric-card income"><div class="metric-label">Receita Anual</div><div class="metric-value">{sym} {y_inc:,.2f}</div></div>', unsafe_allow_html=True)
         c2.markdown(f'<div class="metric-card expense"><div class="metric-label">Despesa Anual</div><div class="metric-value">{sym} {y_exp:,.2f}</div></div>', unsafe_allow_html=True)
         c3.markdown(f'<div class="metric-card balance"><div class="metric-label">Saldo Anual</div><div class="metric-value" style="color:{"#30d158" if y_bal>=0 else "#ff453a"}">{sym} {y_bal:,.2f}</div></div>', unsafe_allow_html=True)
-        # Alertas de orçamento + email controlado
-        today_str = datetime.now().date().isoformat()
         for cat, lim in budgets.items():
             spent = exp[exp['category']==cat]['value'].sum() if not exp.empty else 0
             if lim>0 and spent>lim:
                 st.markdown(f'<div class="metric-card expense alert-budget"><div class="metric-label">{t("alert_budget")} {cat}</div><div class="metric-value" style="font-size:1.2rem">{sym} {spent:,.2f} / {sym} {lim:,.2f}</div></div>', unsafe_allow_html=True)
-                if SEND_NOTIFICATIONS and st.session_state.email_enabled:
-                    if today_str not in st.session_state.budget_emailed_today:
-                        st.session_state.budget_emailed_today = {today_str: set()}
-                    if cat not in st.session_state.budget_emailed_today.get(today_str, set()):
-                        body = f"<h3>⚠️ Orçamento estourado!</h3><p>A categoria <b>{cat}</b> ultrapassou o limite de {sym} {lim:,.2f}.</p><p>Gasto atual: {sym} {spent:,.2f}</p>"
-                        send_email(user_email, f"Alerta de orçamento - {cat}", body)
-                        if today_str not in st.session_state.budget_emailed_today:
-                            st.session_state.budget_emailed_today[today_str] = set()
-                        st.session_state.budget_emailed_today[today_str].add(cat)
     else: st.info(t("no_data"))
 
 # ABA ORÇAMENTOS
@@ -673,7 +643,6 @@ with tabs[6]:
         if st.button(t("clear_reminders")): clear_reminders(uid); st.rerun()
     else: st.info(t("no_reminders"))
 
-# Notificação toast
 if reminders:
     ovd = [r for r in reminders if r['due_date']<datetime.now().date() and not r['paid']]
     if ovd: st.toast(f"⚠️ Você tem {len(ovd)} contas vencidas!", icon="🔔")
@@ -759,17 +728,18 @@ with st.sidebar:
     elif st.session_state.chat_model == "ChatGPT": st.session_state.okey = st.text_input("Chave OpenAI", type="password")
     if st.button("Limpar histórico"): clear_chat(uid); st.session_state.memory = []; st.rerun()
     st.markdown("---")
-    st.markdown("### Notificações")
-    st.session_state.email_enabled = st.toggle(t("email_toggle"), value=st.session_state.email_enabled)
     if st.button(t("send_resume")):
-        if SEND_NOTIFICATIONS:
+        if SEND_NOTIFICATIONS and not st.session_state.email_sent:
             body = f"<h2>FinBot - Resumo Financeiro</h2><p>Saldo: {sym} {balance:,.2f}</p><p>Receitas: {sym} {income_total:,.2f}</p><p>Despesas: {sym} {expense_total:,.2f}</p>"
             if goal:
                 saved = balance if balance>0 else 0
                 prog = min(saved/goal['amount']*100,100) if goal['amount']>0 else 0
                 body += f"<p>Meta: {sym} {goal['amount']:,.2f} ({prog:.1f}%)</p>"
-            send_email(user_email, "Resumo Financeiro - FinBot", body)
-            st.success("Email enviado!")
+            if send_email(user_email, "Resumo Financeiro - FinBot", body):
+                st.success("Email enviado!")
+                st.session_state.email_sent = True
+        elif st.session_state.email_sent:
+            st.info("Resumo já enviado nesta sessão. Recarregue a página para enviar novamente.")
         else:
             st.error("SendGrid não configurado.")
 
