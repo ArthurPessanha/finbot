@@ -22,36 +22,32 @@ except: OPENAI = False
 try:
     from sendgrid import SendGridAPIClient
     from sendgrid.helpers.mail import Mail
-    SENDGRID_AVAILABLE = True
-except: SENDGRID_AVAILABLE = False
+    SENDGRID = True
+except: SENDGRID = False
 
 st.set_page_config(page_title="FinBot", page_icon="🤖", layout="wide")
 
+# Supabase
 url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
-SENDGRID_API_KEY = st.secrets.get("SENDGRID_API_KEY", "")
+# SendGrid
+SENDGRID_KEY = st.secrets.get("SENDGRID_API_KEY", "")
 FROM_EMAIL = st.secrets.get("FROM_EMAIL", "")
-SEND_NOTIFICATIONS = SENDGRID_AVAILABLE and bool(SENDGRID_API_KEY)
 
-def send_email(to_email, subject, body):
-    if not SEND_NOTIFICATIONS:
-        return False
+def send_email(to, subject, body):
+    if not SENDGRID or not SENDGRID_KEY: return False
     try:
-        message = Mail(from_email=FROM_EMAIL, to_emails=to_email, subject=subject, html_content=body)
-        sg = SendGridAPIClient(SENDGRID_API_KEY)
-        sg.send(message)
+        msg = Mail(from_email=FROM_EMAIL, to_emails=to, subject=subject, html_content=body)
+        SendGridAPIClient(SENDGRID_KEY).send(msg)
         return True
     except Exception as e:
-        error_msg = str(e)
-        if "rate limit" in error_msg.lower():
-            st.toast("⚠️ Cota de emails excedida. Tente novamente mais tarde.", icon="📧")
-        else:
-            st.error(f"Erro ao enviar email: {e}")
+        if "rate limit" in str(e).lower():
+            st.toast("⚠️ Cota de emails excedida. Tente mais tarde.", icon="📧")
         return False
 
-# Traduções completas (mantidas)
+# ========== TRADUÇÕES (MANTIDAS) ==========
 T = {
   "pt": {
     "title": "FinBot", "subtitle": "Seu assistente financeiro inteligente",
@@ -91,8 +87,7 @@ T = {
     "reminder_add": "Adicionar", "reminder_delete": "Excluir",
     "reminder_paid": "Pago", "reminder_pending": "Pendente", "reminder_overdue": "Vencido!",
     "no_reminders": "Nenhum lembrete.", "clear_reminders": "Limpar todos",
-    "send_resume": "Enviar resumo por email",
-    "email_toggle": "Ativar emails automáticos"
+    "send_resume": "Enviar resumo por email"
   },
   "en": {
     "title": "FinBot", "subtitle": "Your intelligent financial assistant",
@@ -132,12 +127,11 @@ T = {
     "reminder_add": "Add", "reminder_delete": "Delete",
     "reminder_paid": "Paid", "reminder_pending": "Pending", "reminder_overdue": "Overdue!",
     "no_reminders": "No reminders.", "clear_reminders": "Clear all",
-    "send_resume": "Send summary by email",
-    "email_toggle": "Enable automatic emails"
+    "send_resume": "Send summary by email"
   }
 }
 
-# ========== FUNÇÕES SUPABASE ==========
+# ========== FUNÇÕES SUPABASE (MANTIDAS) ==========
 def load_transactions(uid):
     r = supabase.table("transactions").select("*").eq("user_id", uid).order("date", desc=True).execute()
     data = r.data or []
@@ -209,7 +203,7 @@ if 'user' not in st.session_state: st.session_state.user = None
 if 'chat_model' not in st.session_state: st.session_state.chat_model = "Offline"
 if 'show_chat' not in st.session_state: st.session_state.show_chat = False
 if 'memory' not in st.session_state: st.session_state.memory = []
-if 'email_sent' not in st.session_state: st.session_state.email_sent = False  # controle do botão manual
+if 'email_sent' not in st.session_state: st.session_state.email_sent = False
 
 # ========== IDIOMA ==========
 if st.session_state.lang is None:
@@ -263,7 +257,7 @@ if not st.session_state.user:
         st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
-# ========== DADOS DO USUÁRIO ==========
+# ========== DADOS ==========
 uid = st.session_state.user.id
 user_email = st.session_state.user.email
 transactions = load_transactions(uid)
@@ -276,7 +270,7 @@ income_total = sum(tx['value'] for tx in transactions if tx['type'] == 'income')
 expense_total = sum(tx['value'] for tx in transactions if tx['type'] == 'expense')
 balance = income_total - expense_total
 
-# ========== CSS ==========
+# ========== CSS (MANTIDO) ==========
 st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -729,7 +723,7 @@ with st.sidebar:
     if st.button("Limpar histórico"): clear_chat(uid); st.session_state.memory = []; st.rerun()
     st.markdown("---")
     if st.button(t("send_resume")):
-        if SEND_NOTIFICATIONS and not st.session_state.email_sent:
+        if SENDGRID and SENDGRID_KEY and not st.session_state.email_sent:
             body = f"<h2>FinBot - Resumo Financeiro</h2><p>Saldo: {sym} {balance:,.2f}</p><p>Receitas: {sym} {income_total:,.2f}</p><p>Despesas: {sym} {expense_total:,.2f}</p>"
             if goal:
                 saved = balance if balance>0 else 0
