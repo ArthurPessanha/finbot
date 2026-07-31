@@ -42,14 +42,18 @@ FROM_EMAIL = st.secrets.get("FROM_EMAIL", "")
 SEND_NOTIFICATIONS = SENDGRID_AVAILABLE and bool(SENDGRID_API_KEY)
 
 def send_email(to_email, subject, body):
-    if not SEND_NOTIFICATIONS:
+    if not SEND_NOTIFICATIONS or not st.session_state.get("email_enabled", True):
         return
     try:
         message = Mail(from_email=FROM_EMAIL, to_emails=to_email, subject=subject, html_content=body)
         sg = SendGridAPIClient(SENDGRID_API_KEY)
         sg.send(message)
     except Exception as e:
-        st.error(f"Erro ao enviar email: {e}")
+        error_msg = str(e)
+        if "rate limit" in error_msg.lower():
+            st.toast("⚠️ Cota de emails excedida. Tente novamente mais tarde.", icon="📧")
+        else:
+            st.error(f"Erro ao enviar email: {e}")
 
 # ============ TRADUÇÕES ============
 T = {
@@ -91,7 +95,8 @@ T = {
     "reminder_add": "Adicionar", "reminder_delete": "Excluir",
     "reminder_paid": "Pago", "reminder_pending": "Pendente", "reminder_overdue": "Vencido!",
     "no_reminders": "Nenhum lembrete.", "clear_reminders": "Limpar todos",
-    "send_resume": "Enviar resumo por email"
+    "send_resume": "Enviar resumo por email",
+    "email_toggle": "Ativar emails automáticos"
   },
   "en": {
     "title": "FinBot", "subtitle": "Your intelligent financial assistant",
@@ -131,7 +136,8 @@ T = {
     "reminder_add": "Add", "reminder_delete": "Delete",
     "reminder_paid": "Paid", "reminder_pending": "Pending", "reminder_overdue": "Overdue!",
     "no_reminders": "No reminders.", "clear_reminders": "Clear all",
-    "send_resume": "Send summary by email"
+    "send_resume": "Send summary by email",
+    "email_toggle": "Enable automatic emails"
   }
 }
 
@@ -207,8 +213,9 @@ if 'user' not in st.session_state: st.session_state.user = None
 if 'chat_model' not in st.session_state: st.session_state.chat_model = "Offline"
 if 'show_chat' not in st.session_state: st.session_state.show_chat = False
 if 'memory' not in st.session_state: st.session_state.memory = []
-if 'budget_emailed' not in st.session_state: st.session_state.budget_emailed = set()
+if 'budget_emailed_today' not in st.session_state: st.session_state.budget_emailed_today = {}
 if 'reminder_email_sent' not in st.session_state: st.session_state.reminder_email_sent = False
+if 'email_enabled' not in st.session_state: st.session_state.email_enabled = True
 
 # ========== IDIOMA ==========
 if st.session_state.lang is None:
@@ -275,8 +282,8 @@ income_total = sum(tx['value'] for tx in transactions if tx['type'] == 'income')
 expense_total = sum(tx['value'] for tx in transactions if tx['type'] == 'expense')
 balance = income_total - expense_total
 
-# ========== NOTIFICAÇÕES AUTOMÁTICAS ==========
-if reminders and SEND_NOTIFICATIONS:
+# ========== NOTIFICAÇÕES AUTOMÁTICAS (CONTROLADAS) ==========
+if reminders and SEND_NOTIFICATIONS and st.session_state.email_enabled:
     overdue = [r for r in reminders if r['due_date'] < datetime.now().date() and not r['paid']]
     if overdue and not st.session_state.reminder_email_sent:
         items = "".join(f"<li>{r['description']}: {sym} {r['amount']:.2f} (vencido em {r['due_date'].strftime('%d/%m/%Y')})</li>" for r in overdue)
@@ -565,15 +572,21 @@ with tabs[1]:
         c1.markdown(f'<div class="metric-card income"><div class="metric-label">Receita Anual</div><div class="metric-value">{sym} {y_inc:,.2f}</div></div>', unsafe_allow_html=True)
         c2.markdown(f'<div class="metric-card expense"><div class="metric-label">Despesa Anual</div><div class="metric-value">{sym} {y_exp:,.2f}</div></div>', unsafe_allow_html=True)
         c3.markdown(f'<div class="metric-card balance"><div class="metric-label">Saldo Anual</div><div class="metric-value" style="color:{"#30d158" if y_bal>=0 else "#ff453a"}">{sym} {y_bal:,.2f}</div></div>', unsafe_allow_html=True)
-        # Alertas de orçamento + email
+        # Alertas de orçamento + email controlado
+        today_str = datetime.now().date().isoformat()
         for cat, lim in budgets.items():
             spent = exp[exp['category']==cat]['value'].sum() if not exp.empty else 0
             if lim>0 and spent>lim:
                 st.markdown(f'<div class="metric-card expense alert-budget"><div class="metric-label">{t("alert_budget")} {cat}</div><div class="metric-value" style="font-size:1.2rem">{sym} {spent:,.2f} / {sym} {lim:,.2f}</div></div>', unsafe_allow_html=True)
-                if SEND_NOTIFICATIONS and cat not in st.session_state.budget_emailed:
-                    body = f"<h3>⚠️ Orçamento estourado!</h3><p>A categoria <b>{cat}</b> ultrapassou o limite de {sym} {lim:,.2f}.</p><p>Gasto atual: {sym} {spent:,.2f}</p>"
-                    send_email(user_email, f"Alerta de orçamento - {cat}", body)
-                    st.session_state.budget_emailed.add(cat)
+                if SEND_NOTIFICATIONS and st.session_state.email_enabled:
+                    if today_str not in st.session_state.budget_emailed_today:
+                        st.session_state.budget_emailed_today = {today_str: set()}
+                    if cat not in st.session_state.budget_emailed_today.get(today_str, set()):
+                        body = f"<h3>⚠️ Orçamento estourado!</h3><p>A categoria <b>{cat}</b> ultrapassou o limite de {sym} {lim:,.2f}.</p><p>Gasto atual: {sym} {spent:,.2f}</p>"
+                        send_email(user_email, f"Alerta de orçamento - {cat}", body)
+                        if today_str not in st.session_state.budget_emailed_today:
+                            st.session_state.budget_emailed_today[today_str] = set()
+                        st.session_state.budget_emailed_today[today_str].add(cat)
     else: st.info(t("no_data"))
 
 # ABA ORÇAMENTOS
@@ -745,6 +758,9 @@ with st.sidebar:
     if st.session_state.chat_model == "Gemini": st.session_state.gkey = st.text_input("Chave Gemini", type="password")
     elif st.session_state.chat_model == "ChatGPT": st.session_state.okey = st.text_input("Chave OpenAI", type="password")
     if st.button("Limpar histórico"): clear_chat(uid); st.session_state.memory = []; st.rerun()
+    st.markdown("---")
+    st.markdown("### Notificações")
+    st.session_state.email_enabled = st.toggle(t("email_toggle"), value=st.session_state.email_enabled)
     if st.button(t("send_resume")):
         if SEND_NOTIFICATIONS:
             body = f"<h2>FinBot - Resumo Financeiro</h2><p>Saldo: {sym} {balance:,.2f}</p><p>Receitas: {sym} {income_total:,.2f}</p><p>Despesas: {sym} {expense_total:,.2f}</p>"
@@ -754,6 +770,7 @@ with st.sidebar:
                 body += f"<p>Meta: {sym} {goal['amount']:,.2f} ({prog:.1f}%)</p>"
             send_email(user_email, "Resumo Financeiro - FinBot", body)
             st.success("Email enviado!")
-        else: st.error("SendGrid não configurado.")
+        else:
+            st.error("SendGrid não configurado.")
 
 st.markdown(f'<div style="text-align:center;color:#6d6d72;font-size:0.7rem;padding:2rem 0 1rem 0">{t("footer")}</div>', unsafe_allow_html=True)
