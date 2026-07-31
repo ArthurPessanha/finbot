@@ -12,18 +12,13 @@ from supabase import create_client, Client
 try:
     import google.generativeai as genai
     GEMINI = True
-except: GEMINI = False
+except ImportError:
+    GEMINI = False
 try:
     import openai
     OPENAI = True
-except: OPENAI = False
-
-# SendGrid opcional
-try:
-    from sendgrid import SendGridAPIClient
-    from sendgrid.helpers.mail import Mail
-    SENDGRID = True
-except: SENDGRID = False
+except ImportError:
+    OPENAI = False
 
 st.set_page_config(page_title="FinBot", page_icon="🤖", layout="wide")
 
@@ -32,22 +27,7 @@ url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
-# SendGrid
-SENDGRID_KEY = st.secrets.get("SENDGRID_API_KEY", "")
-FROM_EMAIL = st.secrets.get("FROM_EMAIL", "")
-
-def send_email(to, subject, body):
-    if not SENDGRID or not SENDGRID_KEY: return False
-    try:
-        msg = Mail(from_email=FROM_EMAIL, to_emails=to, subject=subject, html_content=body)
-        SendGridAPIClient(SENDGRID_KEY).send(msg)
-        return True
-    except Exception as e:
-        if "rate limit" in str(e).lower():
-            st.toast("⚠️ Cota de emails excedida. Tente mais tarde.", icon="📧")
-        return False
-
-# ========== TRADUÇÕES (MANTIDAS) ==========
+# ========== TRADUÇÕES COMPLETAS ==========
 T = {
   "pt": {
     "title": "FinBot", "subtitle": "Seu assistente financeiro inteligente",
@@ -87,7 +67,10 @@ T = {
     "reminder_add": "Adicionar", "reminder_delete": "Excluir",
     "reminder_paid": "Pago", "reminder_pending": "Pendente", "reminder_overdue": "Vencido!",
     "no_reminders": "Nenhum lembrete.", "clear_reminders": "Limpar todos",
-    "send_resume": "Enviar resumo por email"
+    "category_select": "Categoria", "no_budgets": "Nenhum orçamento definido.",
+    "budget_added": "Limite definido!", "goal_set_success": "Meta definida!",
+    "clear_chat_history": "Limpar histórico do chat", "chat_model_label": "Modelo",
+    "gemini_key_label": "Chave Gemini", "openai_key_label": "Chave OpenAI"
   },
   "en": {
     "title": "FinBot", "subtitle": "Your intelligent financial assistant",
@@ -127,11 +110,14 @@ T = {
     "reminder_add": "Add", "reminder_delete": "Delete",
     "reminder_paid": "Paid", "reminder_pending": "Pending", "reminder_overdue": "Overdue!",
     "no_reminders": "No reminders.", "clear_reminders": "Clear all",
-    "send_resume": "Send summary by email"
+    "category_select": "Category", "no_budgets": "No budgets defined.",
+    "budget_added": "Budget set!", "goal_set_success": "Goal set!",
+    "clear_chat_history": "Clear chat history", "chat_model_label": "Model",
+    "gemini_key_label": "Gemini Key", "openai_key_label": "OpenAI Key"
   }
 }
 
-# ========== FUNÇÕES SUPABASE (MANTIDAS) ==========
+# ========== FUNÇÕES SUPABASE ==========
 def load_transactions(uid):
     r = supabase.table("transactions").select("*").eq("user_id", uid).order("date", desc=True).execute()
     data = r.data or []
@@ -203,7 +189,6 @@ if 'user' not in st.session_state: st.session_state.user = None
 if 'chat_model' not in st.session_state: st.session_state.chat_model = "Offline"
 if 'show_chat' not in st.session_state: st.session_state.show_chat = False
 if 'memory' not in st.session_state: st.session_state.memory = []
-if 'email_sent' not in st.session_state: st.session_state.email_sent = False
 
 # ========== IDIOMA ==========
 if st.session_state.lang is None:
@@ -237,7 +222,8 @@ if not st.session_state.user:
                             auth = supabase.auth.sign_in_with_password({"email": email, "password": pwd})
                             st.session_state.user = auth.user
                             st.rerun()
-                        except Exception as e: st.error(f"Erro: {str(e)}")
+                        except Exception as e:
+                            st.error(t("login_error"))
         with tab2:
             with st.form("register_form"):
                 new_email = st.text_input(t("login_user"), key="reg_email")
@@ -251,15 +237,12 @@ if not st.session_state.user:
                             supabase.auth.sign_up({"email": new_email, "password": new_pwd})
                             st.success(t("register_success"))
                         except Exception as e:
-                            error_msg = str(e)
-                            if "already registered" in error_msg.lower(): st.warning(t("username_taken"))
-                            else: st.error(f"Erro: {error_msg}")
+                            st.error(t("username_taken"))
         st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
-# ========== DADOS ==========
+# ========== DADOS DO USUÁRIO ==========
 uid = st.session_state.user.id
-user_email = st.session_state.user.email
 transactions = load_transactions(uid)
 budgets = load_budgets(uid)
 goal = load_goal(uid)
@@ -270,7 +253,7 @@ income_total = sum(tx['value'] for tx in transactions if tx['type'] == 'income')
 expense_total = sum(tx['value'] for tx in transactions if tx['type'] == 'expense')
 balance = income_total - expense_total
 
-# ========== CSS (MANTIDO) ==========
+# ========== CSS ==========
 st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -657,7 +640,7 @@ with tabs[7]:
                 if st.button("🗑️", key=f"del_{tx['id']}"): delete_transaction(tx['id']); st.rerun()
     else: st.info(t("no_transactions"))
 
-# ========== CHAT COM STREAMING ==========
+# ========== CHAT ==========
 st.markdown('<button class="chat-fab" id="chatFab"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="9" cy="10" r="1.5" fill="white"/><circle cx="15" cy="10" r="1.5" fill="white"/></svg></button>', unsafe_allow_html=True)
 st.markdown("""
 <script>
@@ -721,20 +704,5 @@ with st.sidebar:
     if st.session_state.chat_model == "Gemini": st.session_state.gkey = st.text_input("Chave Gemini", type="password")
     elif st.session_state.chat_model == "ChatGPT": st.session_state.okey = st.text_input("Chave OpenAI", type="password")
     if st.button("Limpar histórico"): clear_chat(uid); st.session_state.memory = []; st.rerun()
-    st.markdown("---")
-    if st.button(t("send_resume")):
-        if SENDGRID and SENDGRID_KEY and not st.session_state.email_sent:
-            body = f"<h2>FinBot - Resumo Financeiro</h2><p>Saldo: {sym} {balance:,.2f}</p><p>Receitas: {sym} {income_total:,.2f}</p><p>Despesas: {sym} {expense_total:,.2f}</p>"
-            if goal:
-                saved = balance if balance>0 else 0
-                prog = min(saved/goal['amount']*100,100) if goal['amount']>0 else 0
-                body += f"<p>Meta: {sym} {goal['amount']:,.2f} ({prog:.1f}%)</p>"
-            if send_email(user_email, "Resumo Financeiro - FinBot", body):
-                st.success("Email enviado!")
-                st.session_state.email_sent = True
-        elif st.session_state.email_sent:
-            st.info("Resumo já enviado nesta sessão. Recarregue a página para enviar novamente.")
-        else:
-            st.error("SendGrid não configurado.")
 
 st.markdown(f'<div style="text-align:center;color:#6d6d72;font-size:0.7rem;padding:2rem 0 1rem 0">{t("footer")}</div>', unsafe_allow_html=True)
