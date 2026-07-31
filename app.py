@@ -1,1004 +1,666 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 import plotly.express as px
 from fpdf import FPDF
-import base64
-import io
+import base64, io, time
 from supabase import create_client, Client
 
-# Tentar importar APIs de IA (opcionais)
+# IAs opcionais
 try:
     import google.generativeai as genai
-    GEMINI_AVAILABLE = True
-except ImportError:
-    GEMINI_AVAILABLE = False
-
+    GEMINI = True
+except: GEMINI = False
 try:
     import openai
-    OPENAI_AVAILABLE = True
-except ImportError:
-    OPENAI_AVAILABLE = False
+    OPENAI = True
+except: OPENAI = False
 
 st.set_page_config(page_title="FinBot", page_icon="🤖", layout="wide")
 
-# ============ CONFIGURAÇÃO DO SUPABASE ============
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Supabase
+url = st.secrets["SUPABASE_URL"]
+key = st.secrets["SUPABASE_KEY"]
+supabase: Client = create_client(url, key)
 
-# ============ TRADUÇÕES ============
-TEXT = {
-    "pt": {
-        "title": "FinBot",
-        "subtitle": "Seu assistente financeiro inteligente",
-        "income": "Receitas",
-        "expenses": "Despesas",
-        "balance": "Saldo",
-        "transactions": "transações",
-        "positive": "Disponível",
-        "negative": "Negativo",
-        "new_transaction": "Nova transação",
-        "type": "Tipo",
-        "type_income": "Receita",
-        "type_expense": "Despesa",
-        "description": "Descrição",
-        "desc_placeholder": "Ex: Salário, Aluguel, Ifood...",
-        "amount": "Valor",
-        "date": "Data",
-        "category": "Categoria",
-        "categories": ["Salário", "Alimentação", "Transporte", "Moradia", "Lazer", "Saúde", "Educação", "Investimento", "Outros"],
-        "add_button": "Adicionar transação",
-        "delete": "Excluir",
-        "recent_activity": "Atividade recente",
-        "no_transactions": "Nenhuma transação ainda",
-        "tab_dashboard": "Painel",
-        "tab_add": "Adicionar",
-        "tab_history": "Histórico",
-        "tab_budgets": "Orçamentos",
-        "tab_goals": "Metas",
-        "tab_insights": "Insights",
-        "tab_export": "Exportar",
-        "spending_breakdown": "Para onde vai seu dinheiro",
-        "no_expenses": "Nenhuma despesa registrada",
-        "summary": "Resumo do período",
-        "of_income_spent": "da receita gasta",
-        "on_track": "Você está no controle",
-        "watch_out": "Fique atento",
-        "over_budget": "Orçamento estourado",
-        "total_transactions": "Total de transações",
-        "largest_expense": "Maior despesa",
-        "top_category": "Categoria principal",
-        "average_expense": "Despesa média",
-        "daily_average": "Média diária (30 dias)",
-        "trend": "Tendência (7 dias)",
-        "no_data": "Sem dados suficientes",
-        "add_to_see": "Adicione transações para visualizar",
-        "footer": "FinBot",
-        "choose_language": "Escolha o idioma",
-        "portuguese": "Português",
-        "english": "English",
-        "currency_symbol": "R$",
-        "fill_all": "Preencha todos os campos",
-        "budget_title": "Definir Orçamentos",
-        "budget_desc": "Estabeleça limites de gastos por categoria.",
-        "set_budget": "Definir limite",
-        "current_spending": "Gasto atual",
-        "remaining": "Restante",
-        "exceeded": "Estourado!",
-        "save_budgets": "Salvar orçamentos",
-        "goal_title": "Metas Financeiras",
-        "goal_desc": "Defina um objetivo de economia e acompanhe seu progresso.",
-        "goal_amount": "Valor da meta",
-        "goal_deadline": "Prazo final",
-        "goal_current": "Economizado até agora",
-        "goal_progress": "Progresso",
-        "goal_set": "Definir meta",
-        "goal_reset": "Limpar meta",
-        "insights_title": "Análise Inteligente",
-        "insights_desc": "Recomendações baseadas nos seus hábitos financeiros.",
-        "insight_top_category": "Sua maior categoria de gasto é",
-        "insight_spending_increase": "Seus gastos aumentaram",
-        "insight_budget_warning": "Você já usou mais de 80% do orçamento de",
-        "insight_frequency": "Você teve muitas transações este mês. Que tal revisar os pequenos gastos?",
-        "insight_general": "Continue acompanhando seus gastos para manter o controle.",
-        "export_title": "Exportar Relatório PDF",
-        "export_pdf_pt": "Baixar PDF (Português)",
-        "export_pdf_en": "Baixar PDF (English)",
-        "pdf_balance": "Saldo",
-        "pdf_income": "Receitas totais",
-        "pdf_expense": "Despesas totais",
-        "pdf_recent_transactions": "Últimas transações",
-        "pdf_generated": "Gerado por FinBot",
-        "chat_title": "Consultor IA",
-        "chat_placeholder": "Digite sua dúvida...",
-        "login_title": "Entrar no FinBot",
-        "login_user": "Usuário",
-        "login_pass": "Senha",
-        "login_btn": "Entrar",
-        "login_error": "Usuário ou senha inválidos.",
-        "register_btn": "Criar conta",
-        "register_success": "Conta criada! Faça login.",
-        "username_taken": "Nome de usuário já existe.",
-        "no_budgets": "Nenhum orçamento definido.",
-        "clear_budgets": "Limpar todos os orçamentos",
-        "category_select": "Categoria",
-        "budget_added": "Limite definido!",
-        "goal_set_success": "Meta definida!",
-        "clear_chat_history": "Limpar histórico do chat",
-        "chat_model_label": "Modelo",
-        "gemini_key_label": "Chave Gemini",
-        "openai_key_label": "Chave OpenAI",
-        "logout": "Sair",
-    },
-    "en": {
-        "title": "FinBot",
-        "subtitle": "Your intelligent financial assistant",
-        "income": "Income",
-        "expenses": "Expenses",
-        "balance": "Balance",
-        "transactions": "transactions",
-        "positive": "Available",
-        "negative": "Overdrawn",
-        "new_transaction": "New transaction",
-        "type": "Type",
-        "type_income": "Income",
-        "type_expense": "Expense",
-        "description": "Description",
-        "desc_placeholder": "e.g., Salary, Rent, Food...",
-        "amount": "Amount",
-        "date": "Date",
-        "category": "Category",
-        "categories": ["Salary", "Food", "Transport", "Housing", "Leisure", "Health", "Education", "Investment", "Other"],
-        "add_button": "Add transaction",
-        "delete": "Delete",
-        "recent_activity": "Recent activity",
-        "no_transactions": "No transactions yet",
-        "tab_dashboard": "Dashboard",
-        "tab_add": "Add",
-        "tab_history": "History",
-        "tab_budgets": "Budgets",
-        "tab_goals": "Goals",
-        "tab_insights": "Insights",
-        "tab_export": "Export",
-        "spending_breakdown": "Where your money goes",
-        "no_expenses": "No expenses recorded",
-        "summary": "Period summary",
-        "of_income_spent": "of income spent",
-        "on_track": "You're on track",
-        "watch_out": "Keep an eye",
-        "over_budget": "Over budget",
-        "total_transactions": "Total transactions",
-        "largest_expense": "Largest expense",
-        "top_category": "Top category",
-        "average_expense": "Average expense",
-        "daily_average": "Daily average (30d)",
-        "trend": "Trend (7 days)",
-        "no_data": "Not enough data",
-        "add_to_see": "Add transactions to see",
-        "footer": "FinBot",
-        "choose_language": "Choose language",
-        "portuguese": "Português",
-        "english": "English",
-        "currency_symbol": "$",
-        "fill_all": "Please fill all fields",
-        "budget_title": "Set Budgets",
-        "budget_desc": "Define spending limits per category.",
-        "set_budget": "Set limit",
-        "current_spending": "Current spending",
-        "remaining": "Remaining",
-        "exceeded": "Exceeded!",
-        "save_budgets": "Save budgets",
-        "goal_title": "Financial Goals",
-        "goal_desc": "Set a savings goal and track your progress.",
-        "goal_amount": "Goal amount",
-        "goal_deadline": "Deadline",
-        "goal_current": "Saved so far",
-        "goal_progress": "Progress",
-        "goal_set": "Set goal",
-        "goal_reset": "Clear goal",
-        "insights_title": "Smart Insights",
-        "insights_desc": "Recommendations based on your spending habits.",
-        "insight_top_category": "Your top spending category is",
-        "insight_spending_increase": "Your spending increased by",
-        "insight_budget_warning": "You've used over 80% of the budget for",
-        "insight_frequency": "You've had many transactions this month. Consider reviewing small expenses.",
-        "insight_general": "Keep tracking your spending to stay in control.",
-        "export_title": "Export PDF Report",
-        "export_pdf_pt": "Download PDF (Português)",
-        "export_pdf_en": "Download PDF (English)",
-        "pdf_balance": "Balance",
-        "pdf_income": "Total Income",
-        "pdf_expense": "Total Expenses",
-        "pdf_recent_transactions": "Recent Transactions",
-        "pdf_generated": "Generated by FinBot",
-        "chat_title": "AI Advisor",
-        "chat_placeholder": "Type your question...",
-        "login_title": "Login to FinBot",
-        "login_user": "User",
-        "login_pass": "Password",
-        "login_btn": "Login",
-        "login_error": "Invalid user or password.",
-        "register_btn": "Sign up",
-        "register_success": "Account created! Please login.",
-        "username_taken": "Username already taken.",
-        "no_budgets": "No budgets defined.",
-        "clear_budgets": "Clear all budgets",
-        "category_select": "Category",
-        "budget_added": "Budget set!",
-        "goal_set_success": "Goal set!",
-        "clear_chat_history": "Clear chat history",
-        "chat_model_label": "Model",
-        "gemini_key_label": "Gemini Key",
-        "openai_key_label": "OpenAI Key",
-        "logout": "Logout",
-    }
+# Traduções completas
+T = {
+  "pt": {
+    "title": "FinBot", "subtitle": "Seu assistente financeiro inteligente",
+    "income": "Receitas", "expenses": "Despesas", "balance": "Saldo",
+    "transactions": "transações", "positive": "Disponível", "negative": "Negativo",
+    "new_transaction": "Nova transação", "type": "Tipo", "type_income": "Receita", "type_expense": "Despesa",
+    "description": "Descrição", "desc_placeholder": "Ex: Salário, Aluguel, Ifood...",
+    "amount": "Valor", "date": "Data", "category": "Categoria",
+    "categories": ["Salário","Alimentação","Transporte","Moradia","Lazer","Saúde","Educação","Investimento","Outros"],
+    "add_button": "Adicionar transação", "delete": "Excluir", "no_transactions": "Nenhuma transação ainda",
+    "tab_dashboard": "Painel", "tab_add": "Adicionar", "tab_history": "Histórico",
+    "tab_budgets": "Orçamentos", "tab_goals": "Metas", "tab_insights": "Insights",
+    "tab_export": "Exportar", "tab_reminders": "Lembretes",
+    "no_expenses": "Nenhuma despesa registrada", "summary": "Resumo", "of_income_spent": "da receita gasta",
+    "on_track": "Sob controle", "watch_out": "Atenção", "over_budget": "Estourado",
+    "total_transactions": "Total de transações", "largest_expense": "Maior despesa",
+    "top_category": "Categoria principal", "average_expense": "Despesa média",
+    "daily_average": "Média diária (30d)", "trend": "Tendência (7d)", "no_data": "Sem dados",
+    "footer": "FinBot", "choose_language": "Idioma", "portuguese": "Português", "english": "English",
+    "currency": "R$", "fill_all": "Preencha todos os campos",
+    "budget_title": "Definir Orçamentos", "set_budget": "Definir limite",
+    "current_spending": "Gasto atual", "remaining": "Restante", "clear_budgets": "Limpar orçamentos",
+    "goal_title": "Metas Financeiras", "goal_amount": "Valor da meta", "goal_deadline": "Prazo final",
+    "goal_current": "Economizado", "goal_progress": "Progresso", "goal_set": "Definir meta", "goal_reset": "Limpar meta",
+    "insights_title": "Análise Inteligente",
+    "export_title": "Exportar PDF", "export_pdf_pt": "Baixar PDF (PT)", "export_pdf_en": "Baixar PDF (EN)",
+    "chat_title": "Consultor IA", "chat_placeholder": "Digite sua dúvida...",
+    "login_title": "Entrar no FinBot", "login_user": "Email", "login_pass": "Senha",
+    "login_btn": "Entrar", "login_error": "Email ou senha inválidos.",
+    "register_btn": "Criar conta", "register_success": "Conta criada! Verifique seu email.",
+    "username_taken": "Email já cadastrado.", "logout": "Sair",
+    "chat_suggestions": ["Como economizar?","Onde investir?","Dicas para orçamento","Metas financeiras"],
+    "monthly_comparison": "Comparativo Mensal", "forecast": "Previsão", "annual_summary": "Resumo Anual",
+    "alert_budget": "⚠️ Orçamento estourado!",
+    "reminder_title": "Lembretes", "reminder_desc": "Cadastre contas a pagar.",
+    "reminder_description": "Descrição", "reminder_amount": "Valor", "reminder_due_date": "Vencimento",
+    "reminder_add": "Adicionar", "reminder_delete": "Excluir",
+    "reminder_paid": "Pago", "reminder_pending": "Pendente", "reminder_overdue": "Vencido!",
+    "no_reminders": "Nenhum lembrete.", "clear_reminders": "Limpar todos"
+  },
+  "en": {
+    "title": "FinBot", "subtitle": "Your intelligent financial assistant",
+    "income": "Income", "expenses": "Expenses", "balance": "Balance",
+    "transactions": "transactions", "positive": "Available", "negative": "Overdrawn",
+    "new_transaction": "New transaction", "type": "Type", "type_income": "Income", "type_expense": "Expense",
+    "description": "Description", "desc_placeholder": "e.g., Salary, Rent, Food...",
+    "amount": "Amount", "date": "Date", "category": "Category",
+    "categories": ["Salary","Food","Transport","Housing","Leisure","Health","Education","Investment","Other"],
+    "add_button": "Add transaction", "delete": "Delete", "no_transactions": "No transactions yet",
+    "tab_dashboard": "Dashboard", "tab_add": "Add", "tab_history": "History",
+    "tab_budgets": "Budgets", "tab_goals": "Goals", "tab_insights": "Insights",
+    "tab_export": "Export", "tab_reminders": "Reminders",
+    "no_expenses": "No expenses recorded", "summary": "Summary", "of_income_spent": "of income spent",
+    "on_track": "On track", "watch_out": "Watch out", "over_budget": "Over budget",
+    "total_transactions": "Total transactions", "largest_expense": "Largest expense",
+    "top_category": "Top category", "average_expense": "Average expense",
+    "daily_average": "Daily average (30d)", "trend": "Trend (7d)", "no_data": "No data",
+    "footer": "FinBot", "choose_language": "Language", "portuguese": "Português", "english": "English",
+    "currency": "$", "fill_all": "Please fill all fields",
+    "budget_title": "Set Budgets", "set_budget": "Set limit",
+    "current_spending": "Current spending", "remaining": "Remaining", "clear_budgets": "Clear budgets",
+    "goal_title": "Financial Goals", "goal_amount": "Goal amount", "goal_deadline": "Deadline",
+    "goal_current": "Saved", "goal_progress": "Progress", "goal_set": "Set goal", "goal_reset": "Clear goal",
+    "insights_title": "Smart Insights",
+    "export_title": "Export PDF", "export_pdf_pt": "Download PDF (PT)", "export_pdf_en": "Download PDF (EN)",
+    "chat_title": "AI Advisor", "chat_placeholder": "Type your question...",
+    "login_title": "Login to FinBot", "login_user": "Email", "login_pass": "Password",
+    "login_btn": "Login", "login_error": "Invalid email or password.",
+    "register_btn": "Sign up", "register_success": "Account created! Check your email.",
+    "username_taken": "Email already registered.", "logout": "Logout",
+    "chat_suggestions": ["How to save?","Where to invest?","Budget tips","Financial goals"],
+    "monthly_comparison": "Monthly Comparison", "forecast": "Forecast", "annual_summary": "Annual Summary",
+    "alert_budget": "⚠️ Budget exceeded!",
+    "reminder_title": "Reminders", "reminder_desc": "Add bills to pay.",
+    "reminder_description": "Description", "reminder_amount": "Amount", "reminder_due_date": "Due date",
+    "reminder_add": "Add", "reminder_delete": "Delete",
+    "reminder_paid": "Paid", "reminder_pending": "Pending", "reminder_overdue": "Overdue!",
+    "no_reminders": "No reminders.", "clear_reminders": "Clear all"
+  }
 }
 
-# ============ FUNÇÕES DO SUPABASE ============
-def load_transactions(user_id):
-    response = supabase.table("transactions").select("*").eq("user_id", user_id).order("date", desc=True).execute()
-    data = response.data or []
+# ========== FUNÇÕES SUPABASE ==========
+def load_transactions(uid):
+    r = supabase.table("transactions").select("*").eq("user_id", uid).order("date", desc=True).execute()
+    data = r.data or []
     for tx in data:
-        if isinstance(tx['date'], str):
-            tx['date'] = datetime.fromisoformat(tx['date'].replace('Z', '+00:00'))
+        if isinstance(tx['date'], str): tx['date'] = datetime.fromisoformat(tx['date'])
     return data
 
-def save_transaction(user_id, transaction):
-    supabase.table("transactions").insert({
-        "user_id": user_id,
-        "date": transaction['date'].isoformat(),
-        "description": transaction['description'],
-        "value": transaction['value'],
-        "type": transaction['type'],
-        "category": transaction['category']
-    }).execute()
+def save_transaction(uid, tx):
+    supabase.table("transactions").insert({"user_id": uid, "date": tx['date'].isoformat(), "description": tx['description'], "value": tx['value'], "type": tx['type'], "category": tx['category']}).execute()
 
-def delete_transaction_db(tx_id):
-    supabase.table("transactions").delete().eq("id", tx_id).execute()
+def delete_transaction(tid):
+    supabase.table("transactions").delete().eq("id", tid).execute()
 
-def load_budgets(user_id):
-    response = supabase.table("budgets").select("*").eq("user_id", user_id).execute()
-    budgets = {}
-    for row in (response.data or []):
-        budgets[row['category']] = float(row['limit_value'])
-    return budgets
+def load_budgets(uid):
+    r = supabase.table("budgets").select("*").eq("user_id", uid).execute()
+    return {row['category']: float(row['limit_value']) for row in (r.data or [])}
 
-def save_budget(user_id, category, limit_value):
-    supabase.table("budgets").upsert({
-        "user_id": user_id,
-        "category": category,
-        "limit_value": limit_value
-    }).execute()
+def save_budget(uid, cat, limit):
+    supabase.table("budgets").upsert({"user_id": uid, "category": cat, "limit_value": limit}).execute()
 
-def delete_all_budgets_db(user_id):
-    supabase.table("budgets").delete().eq("user_id", user_id).execute()
+def clear_budgets(uid):
+    supabase.table("budgets").delete().eq("user_id", uid).execute()
 
-def load_goal(user_id):
-    response = supabase.table("goals").select("*").eq("user_id", user_id).execute()
-    if response.data:
-        g = response.data[0]
+def load_goal(uid):
+    r = supabase.table("goals").select("*").eq("user_id", uid).execute()
+    if r.data:
+        g = r.data[0]
         return {'amount': float(g['amount']), 'deadline': datetime.strptime(g['deadline'], '%Y-%m-%d').date()}
     return None
 
-def save_goal(user_id, amount, deadline):
-    supabase.table("goals").upsert({
-        "user_id": user_id,
-        "amount": amount,
-        "deadline": deadline.isoformat()
-    }).execute()
+def save_goal(uid, amount, deadline):
+    supabase.table("goals").upsert({"user_id": uid, "amount": amount, "deadline": deadline.isoformat()}).execute()
 
-def delete_goal_db(user_id):
-    supabase.table("goals").delete().eq("user_id", user_id).execute()
+def delete_goal(uid):
+    supabase.table("goals").delete().eq("user_id", uid).execute()
 
-def load_chat_history(user_id):
-    response = supabase.table("chat_history").select("*").eq("user_id", user_id).order("created_at", desc=False).execute()
-    return [{"role": row['role'], "content": row['content']} for row in (response.data or [])]
+def load_chat(uid):
+    r = supabase.table("chat_history").select("*").eq("user_id", uid).order("created_at", desc=False).execute()
+    return [{"role": row['role'], "content": row['content']} for row in (r.data or [])]
 
-def save_chat_message(user_id, role, content):
-    supabase.table("chat_history").insert({
-        "user_id": user_id,
-        "role": role,
-        "content": content
-    }).execute()
+def save_chat(uid, role, content):
+    supabase.table("chat_history").insert({"user_id": uid, "role": role, "content": content}).execute()
 
-def clear_chat_history_db(user_id):
-    supabase.table("chat_history").delete().eq("user_id", user_id).execute()
+def clear_chat(uid):
+    supabase.table("chat_history").delete().eq("user_id", uid).execute()
 
-# ============ ESTADO DA SESSÃO ============
-if 'lang' not in st.session_state:
-    st.session_state.lang = None
-if 'users' not in st.session_state:
-    st.session_state.users = {"admin": "admin"}
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-if 'current_user' not in st.session_state:
-    st.session_state.current_user = None
-if 'chat_model' not in st.session_state:
-    st.session_state.chat_model = "Offline"
-if 'show_chat' not in st.session_state:
-    st.session_state.show_chat = False
+def load_reminders(uid):
+    r = supabase.table("reminders").select("*").eq("user_id", uid).order("due_date", desc=False).execute()
+    data = r.data or []
+    for rem in data:
+        if isinstance(rem['due_date'], str): rem['due_date'] = datetime.fromisoformat(rem['due_date']).date()
+    return data
 
-# ============ TELA DE ESCOLHA DE IDIOMA ============
+def save_reminder(uid, desc, amount, due):
+    supabase.table("reminders").insert({"user_id": uid, "description": desc, "amount": amount, "due_date": due.isoformat(), "paid": False}).execute()
+
+def toggle_reminder(rid, paid):
+    supabase.table("reminders").update({"paid": paid}).eq("id", rid).execute()
+
+def delete_reminder(rid):
+    supabase.table("reminders").delete().eq("id", rid).execute()
+
+def clear_reminders(uid):
+    supabase.table("reminders").delete().eq("user_id", uid).execute()
+
+# ========== ESTADO ==========
+if 'lang' not in st.session_state: st.session_state.lang = None
+if 'user' not in st.session_state: st.session_state.user = None
+if 'chat_model' not in st.session_state: st.session_state.chat_model = "Offline"
+if 'show_chat' not in st.session_state: st.session_state.show_chat = False
+if 'memory' not in st.session_state: st.session_state.memory = []
+
+# ========== IDIOMA ==========
 if st.session_state.lang is None:
-    st.markdown("""
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-        * { font-family: 'Inter', sans-serif; }
-        .stApp { background: #0a0a0a; }
-        .welcome-container {
-            display: flex; flex-direction: column; align-items: center;
-            justify-content: center; min-height: 70vh; color: white;
-        }
-        .robot-logo-large { font-size: 80px; margin-bottom: 1.5rem; }
-        .welcome-title { font-size: 2rem; font-weight: 600; margin-bottom: 2rem; }
-    </style>
-    """, unsafe_allow_html=True)
-    st.markdown("""
-    <div class="welcome-container">
-        <div class="robot-logo-large">🤖</div>
-        <div class="welcome-title">Bem-vindo ao FinBot</div>
-        <p style="opacity: 0.7;">Escolha o idioma / Choose language</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("<style>.stApp{background:#0a0a0a;}</style>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("🇧🇷 Português", use_container_width=True):
-            st.session_state.lang = "pt"
-            st.rerun()
+        if st.button("🇧🇷 Português", use_container_width=True): st.session_state.lang = "pt"; st.rerun()
     with c2:
-        if st.button("🇺🇸 English", use_container_width=True):
-            st.session_state.lang = "en"
-            st.rerun()
+        if st.button("🇺🇸 English", use_container_width=True): st.session_state.lang = "en"; st.rerun()
     st.stop()
 
-# ============ TELA DE LOGIN / REGISTRO ============
-if not st.session_state.logged_in:
-    st.markdown("""
-    <style>
-        .stApp { background: #0a0a0a; }
-        .login-container { max-width: 400px; margin: 10% auto; padding: 2rem; background: #1c1c1e; border-radius: 20px; box-shadow: 0 8px 30px rgba(0,0,0,0.3); }
-        h2 { color: #f5f5f7; text-align: center; }
-    </style>
-    """, unsafe_allow_html=True)
+def t(key): return T[st.session_state.lang][key]
+sym = t("currency")
+
+# ========== LOGIN ==========
+if not st.session_state.user:
+    st.markdown("<style>.stApp{background:#0a0a0a;}</style>", unsafe_allow_html=True)
     with st.container():
-        st.markdown(f"<h2>🤖 {TEXT[st.session_state.lang]['login_title']}</h2>", unsafe_allow_html=True)
-        tab_login, tab_register = st.tabs(["Login", "Registrar"])
-        with tab_login:
-            user = st.text_input(TEXT[st.session_state.lang]['login_user'])
-            password = st.text_input(TEXT[st.session_state.lang]['login_pass'], type="password")
-            if st.button(TEXT[st.session_state.lang]['login_btn'], use_container_width=True):
-                if st.session_state.users.get(user) == password:
-                    st.session_state.logged_in = True
-                    st.session_state.current_user = user
+        st.markdown(f"<h2 style='text-align:center;color:#f5f5f7;'>🤖 {t('login_title')}</h2>", unsafe_allow_html=True)
+        tab1, tab2 = st.tabs(["Login", "Registrar"])
+        with tab1:
+            email = st.text_input(t("login_user"))
+            pwd = st.text_input(t("login_pass"), type="password")
+            if st.button(t("login_btn"), use_container_width=True):
+                try:
+                    auth = supabase.auth.sign_in_with_password({"email": email, "password": pwd})
+                    st.session_state.user = auth.user
                     st.rerun()
-                else:
-                    st.error(TEXT[st.session_state.lang]['login_error'])
-        with tab_register:
-            new_user = st.text_input(TEXT[st.session_state.lang]['login_user'], key="reg_user")
-            new_pass = st.text_input(TEXT[st.session_state.lang]['login_pass'], type="password", key="reg_pass")
-            if st.button(TEXT[st.session_state.lang]['register_btn'], use_container_width=True):
-                if new_user in st.session_state.users:
-                    st.warning(TEXT[st.session_state.lang]['username_taken'])
-                elif new_user and new_pass:
-                    st.session_state.users[new_user] = new_pass
-                    st.success(TEXT[st.session_state.lang]['register_success'])
-                else:
-                    st.warning(TEXT[st.session_state.lang]['fill_all'])
+                except: st.error(t("login_error"))
+        with tab2:
+            new_email = st.text_input(t("login_user"), key="reg_email")
+            new_pwd = st.text_input(t("login_pass"), type="password", key="reg_pwd")
+            if st.button(t("register_btn"), use_container_width=True):
+                try:
+                    supabase.auth.sign_up({"email": new_email, "password": new_pwd})
+                    st.success(t("register_success"))
+                except: st.warning(t("username_taken"))
     st.stop()
 
-# ============ CARREGAR DADOS DO USUÁRIO ============
-user_id = st.session_state.current_user
-transactions = load_transactions(user_id)
-budgets = load_budgets(user_id)
-goal = load_goal(user_id)
-chat_history = load_chat_history(user_id)
-
-# ============ CSS TEMA ESCURO + CHAT MINIMALISTA ============
-st.markdown(f"""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;450;500;600;700&display=swap');
-    * {{{{ font-family: 'Inter', sans-serif; }}}}
-    header[data-testid="stHeader"] {{{{ display: none !important; }}}}
-    div[data-testid="stToolbar"] {{{{ display: none !important; }}}}
-    div[data-testid="stDecoration"] {{{{ display: none !important; }}}}
-    #MainMenu {{{{ display: none !important; }}}}
-    footer {{{{ display: none !important; }}}}
-    .stApp {{{{ background: #0a0a0a; }}}}
-    .block-container {{{{ padding: 2rem 3rem; max-width: 1200px; }}}}
-    .logo-area {{{{ display: flex; align-items: center; gap: 0.75rem; margin-bottom: 2rem; }}}}
-    .robot-logo {{{{ font-size: 36px; line-height: 1; }}}}
-    h1 {{{{ font-weight: 700 !important; color: #f5f5f7 !important; font-size: 2rem !important; }}}}
-    .subtitle {{{{ color: #86868b; font-size: 0.9rem; }}}}
-    @keyframes fadeInUp {{ from {{ opacity: 0; transform: translateY(10px); }} to {{ opacity: 1; transform: translateY(0); }} }}
-    @keyframes slideInRight {{ from {{ transform: translateX(100px); opacity: 0; }} to {{ transform: translateX(0); opacity: 1; }} }}
-    .animate-in {{{{ animation: fadeInUp 0.5s ease forwards; }}}}
-    .metric-card {{
-        background: linear-gradient(135deg, #1c1c1e 0%, #2c2c2e 100%);
-        padding: 1.8rem 1.5rem; border-radius: 24px; box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-        animation: fadeInUp 0.5s ease; transition: transform 0.2s; position: relative; overflow: hidden;
-    }}
-    .metric-card:hover {{ transform: translateY(-4px); }}
-    .metric-card::before {{
-        content: ''; position: absolute; top: -30px; right: -30px; width: 80px; height: 80px; border-radius: 50%; opacity: 0.1;
-    }}
-    .metric-card.income::before {{ background: #30d158; }}
-    .metric-card.expense::before {{ background: #ff453a; }}
-    .metric-card.balance::before {{ background: #667eea; }}
-    .metric-icon {{ font-size: 2rem; margin-bottom: 0.5rem; }}
-    .metric-label {{ text-transform: uppercase; letter-spacing: 1px; font-size: 0.75rem; font-weight: 500; color: #86868b; margin-bottom: 0.4rem; }}
-    .metric-value {{ font-size: 2rem; font-weight: 700; color: #f5f5f7; line-height: 1.2; }}
-    .metric-sub {{ color: #6d6d72; font-size: 0.8rem; margin-top: 0.3rem; }}
-    .content-card {{ background: #1c1c1e; padding: 2rem; border-radius: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.2); animation: fadeInUp 0.5s ease; }}
-    .card-title {{ color: #f5f5f7; font-size: 1rem; font-weight: 600; margin-bottom: 1.5rem; }}
-    .tx-row {{ display: flex; align-items: center; justify-content: space-between; padding: 0.85rem 0; border-bottom: 1px solid #2c2c2e; }}
-    .tx-img {{ width: 42px; height: 42px; border-radius: 12px; background: #2c2c2e; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0; }}
-    .tx-name {{ color: #f5f5f7; font-weight: 500; }}
-    .tx-cat {{ color: #86868b; font-size: 0.78rem; }}
-    .tx-amount {{ font-weight: 550; text-align: right; }}
-    .tx-amount.income {{ color: #30d158; }}
-    .tx-amount.expense {{ color: #ff453a; }}
-    .tx-date {{ color: #6d6d72; font-size: 0.72rem; text-align: right; }}
-    .stButton > button {{
-        background: #f5f5f7; color: #0a0a0a; border: none; border-radius: 14px;
-        padding: 0.8rem 1.8rem; font-size: 0.9rem; font-weight: 550; width: 100%; cursor: pointer; transition: all 0.2s;
-    }}
-    .stButton > button:hover {{ background: #e5e5ea; transform: scale(1.02); }}
-    .stTextInput > div > div > input,
-    .stNumberInput > div > div > input,
-    .stSelectbox > div > div,
-    .stDateInput > div > div > input {{
-        background: #2c2c2e; border: 1px solid #3a3a3c; color: #f5f5f7;
-        border-radius: 12px; padding: 0.7rem 0.9rem; font-size: 0.88rem;
-    }}
-    .stSelectbox > div {{ color: #f5f5f7; }}
-    .stTabs [data-baseweb="tab-list"] {{ border-bottom: 1px solid #2c2c2e; gap: 0; }}
-    .stTabs [data-baseweb="tab"] {{
-        padding: 0.7rem 1.5rem; font-size: 0.9rem; color: #86868b; background: transparent; border: none;
-    }}
-    .stTabs [aria-selected="true"] {{ color: #f5f5f7; border-bottom: 2px solid #667eea; }}
-    .budget-card {{
-        background: #1c1c1e; padding: 1.5rem; border-radius: 16px; margin-bottom: 1rem;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.2); animation: fadeInUp 0.5s ease;
-    }}
-    .budget-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }}
-    .budget-category {{ font-weight: 600; color: #f5f5f7; font-size: 1rem; }}
-    .progress-bar-container {{ width: 100%; height: 8px; background: #2c2c2e; border-radius: 4px; overflow: hidden; margin-top: 0.5rem; }}
-    .progress-bar-fill {{ height: 100%; border-radius: 4px; transition: width 0.6s ease; }}
-    .chat-fab {{
-        position: fixed; bottom: 30px; right: 30px; width: 56px; height: 56px; border-radius: 28px;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        box-shadow: 0 8px 25px rgba(102,126,234,0.4); display: flex; align-items: center; justify-content: center;
-        cursor: pointer; z-index: 9999; border: none; transition: transform 0.3s;
-    }}
-    .chat-fab:hover {{ transform: scale(1.08); }}
-    .chat-popup {{
-        position: fixed; bottom: 100px; right: 30px; width: 320px; height: 420px;
-        background: #1c1c1e; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-        z-index: 9998; display: none; flex-direction: column; overflow: hidden; border: 1px solid #2c2c2e;
-        animation: slideInRight 0.3s ease;
-    }}
-    .chat-header {{ padding: 0.8rem 1rem; background: #2c2c2e; display: flex; justify-content: space-between; align-items: center; color: #f5f5f7; font-weight: 600; }}
-    .chat-body {{ flex: 1; overflow-y: auto; padding: 0.8rem; display: flex; flex-direction: column; gap: 0.6rem; }}
-    .message-bubble {{ max-width: 85%; padding: 0.6rem 0.9rem; border-radius: 16px; font-size: 0.82rem; line-height: 1.4; }}
-    .user-msg {{ align-self: flex-end; background: #667eea; color: white; border-bottom-right-radius: 4px; }}
-    .bot-msg {{ align-self: flex-start; background: #2c2c2e; color: #f5f5f7; border-bottom-left-radius: 4px; }}
-    .chat-input-container {{ padding: 0.6rem; background: #2c2c2e; display: flex; gap: 0.4rem; }}
-    .chat-input-container input {{ flex: 1; background: #3a3a3c; border: none; border-radius: 20px; padding: 0.5rem 0.9rem; color: white; font-size: 0.82rem; outline: none; }}
-    .chat-input-container button {{ background: #667eea; border: none; border-radius: 50%; width: 32px; height: 32px; color: white; cursor: pointer; }}
-    [data-testid="stSidebar"] {{ background: #1c1c1e; }}
-    [data-testid="stSidebar"] h3 {{ color: #f5f5f7; }}
-</style>
-""".replace("{{{{", "{").replace("}}}}", "}"), unsafe_allow_html=True)
-
-# ============ FUNÇÕES AUXILIARES ============
-def t(key):
-    return TEXT[st.session_state.lang][key]
+# ========== DADOS DO USUÁRIO ==========
+uid = st.session_state.user.id
+transactions = load_transactions(uid)
+budgets = load_budgets(uid)
+goal = load_goal(uid)
+chat_history = load_chat(uid)
+reminders = load_reminders(uid)
 
 income_total = sum(tx['value'] for tx in transactions if tx['type'] == 'income')
 expense_total = sum(tx['value'] for tx in transactions if tx['type'] == 'expense')
 balance = income_total - expense_total
-sym = t("currency_symbol")
 
-def generate_insights():
-    if not transactions:
-        return []
-    df = pd.DataFrame(transactions)
-    expense_df = df[df['type'] == 'expense']
-    insights = []
-    if expense_df.empty:
-        insights.append(t("insight_general"))
-        return insights
-    top_cat = expense_df.groupby('category')['value'].sum().idxmax()
-    insights.append(f"{t('insight_top_category')} **{top_cat}**.")
+# ========== CSS ==========
+st.markdown(f"""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+*{{font-family:'Inter',sans-serif}}
+header, footer, #MainMenu {{display:none!important}}
+.stApp{{background:#0a0a0a}}
+.block-container{{padding:2rem 3rem;max-width:1200px}}
+.logo-area{{display:flex;align-items:center;gap:0.75rem;margin-bottom:2rem}}
+.robot-logo{{font-size:36px}}
+h1{{font-weight:700!important;color:#f5f5f7!important;font-size:2rem!important}}
+.subtitle{{color:#86868b;font-size:0.9rem}}
+@keyframes fadeInUp{{from{{opacity:0;transform:translateY(10px)}}to{{opacity:1;transform:translateY(0)}}}}
+@keyframes slideInRight{{from{{transform:translateX(100px);opacity:0}}to{{transform:translateX(0);opacity:1}}}}
+@keyframes pulse{{0%{{transform:scale(1)}}50%{{transform:scale(1.05)}}100%{{transform:scale(1)}}}}
+.animate-in{{animation:fadeInUp 0.5s ease forwards}}
+.metric-card{{
+  background:linear-gradient(135deg,#1c1c1e 0%,#2c2c2e 100%);
+  padding:1.8rem 1.5rem;border-radius:24px;box-shadow:0 8px 24px rgba(0,0,0,0.3);
+  animation:fadeInUp 0.5s ease;transition:transform 0.2s;position:relative;overflow:hidden;
+}}
+.metric-card:hover{{transform:translateY(-4px)}}
+.metric-card::before{{content:'';position:absolute;top:-30px;right:-30px;width:80px;height:80px;border-radius:50%;opacity:0.1}}
+.metric-card.income::before{{background:#30d158}}
+.metric-card.expense::before{{background:#ff453a}}
+.metric-card.balance::before{{background:#667eea}}
+.metric-icon{{font-size:2rem;margin-bottom:0.5rem}}
+.metric-label{{text-transform:uppercase;letter-spacing:1px;font-size:0.75rem;font-weight:500;color:#86868b;margin-bottom:0.4rem}}
+.metric-value{{font-size:2rem;font-weight:700;color:#f5f5f7;line-height:1.2}}
+.metric-sub{{color:#6d6d72;font-size:0.8rem;margin-top:0.3rem}}
+.alert-budget{{animation:pulse 1s infinite;background:#ff453a!important;color:white!important}}
+.card-title{{color:#f5f5f7;font-size:1rem;font-weight:600;margin-bottom:1.5rem}}
+.tx-row{{display:flex;align-items:center;justify-content:space-between;padding:0.85rem 0;border-bottom:1px solid #2c2c2e}}
+.tx-img{{width:42px;height:42px;border-radius:12px;background:#2c2c2e;display:flex;align-items:center;justify-content:center;font-size:1.5rem;flex-shrink:0}}
+.tx-name{{color:#f5f5f7;font-weight:500}}
+.tx-cat{{color:#86868b;font-size:0.78rem}}
+.tx-amount{{font-weight:550;text-align:right}}
+.tx-amount.income{{color:#30d158}}
+.tx-amount.expense{{color:#ff453a}}
+.tx-date{{color:#6d6d72;font-size:0.72rem;text-align:right}}
+.stButton>button{{
+  background:#f5f5f7;color:#0a0a0a;border:none;border-radius:14px;
+  padding:0.8rem 1.8rem;font-size:0.9rem;font-weight:550;width:100%;cursor:pointer;transition:all 0.2s;
+}}
+.stButton>button:hover{{background:#e5e5ea;transform:scale(1.02)}}
+input, select, .stDateInput>div>input{{background:#2c2c2e!important;border:1px solid #3a3a3c!important;color:#f5f5f7!important;border-radius:12px!important;padding:0.7rem 0.9rem!important;font-size:0.88rem!important}}
+.stSelectbox>div{{color:#f5f5f7!important}}
+div[data-baseweb="select"] svg{{color:#f5f5f7!important}}
+.stTabs [data-baseweb="tab-list"]{{border-bottom:1px solid #2c2c2e;gap:0}}
+.stTabs [data-baseweb="tab"]{{padding:0.7rem 1.5rem;font-size:0.9rem;color:#86868b;background:transparent;border:none}}
+.stTabs [aria-selected="true"]{{color:#f5f5f7;border-bottom:2px solid #667eea}}
+.budget-card{{background:#1c1c1e;padding:1.5rem;border-radius:16px;margin-bottom:1rem;box-shadow:0 2px 12px rgba(0,0,0,0.2)}}
+.budget-header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem}}
+.budget-category{{font-weight:600;color:#f5f5f7;font-size:1rem}}
+.progress-bar-container{{width:100%;height:8px;background:#2c2c2e;border-radius:4px;overflow:hidden;margin-top:0.5rem}}
+.progress-bar-fill{{height:100%;border-radius:4px;transition:width 0.6s ease}}
+
+/* Chat */
+.chat-fab{{
+  position:fixed;bottom:30px;right:30px;width:60px;height:60px;border-radius:30px;
+  background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+  box-shadow:0 8px 30px rgba(102,126,234,0.5);display:flex;align-items:center;justify-content:center;
+  cursor:pointer;z-index:9999;border:none;transition:all 0.3s;
+}}
+.chat-fab:hover{{transform:scale(1.08)}}
+.chat-popup{{
+  position:fixed;bottom:100px;right:30px;width:380px;height:550px;
+  background:#1c1c1e;border-radius:24px;box-shadow:0 25px 70px rgba(0,0,0,0.6);
+  z-index:9998;display:none;flex-direction:column;overflow:hidden;border:1px solid #2c2c2e;
+  animation:slideInRight 0.3s ease;
+}}
+.chat-header{{padding:1rem 1.2rem;background:#2c2c2e;display:flex;justify-content:space-between;align-items:center;color:#f5f5f7;font-weight:600}}
+.chat-body{{flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:0.8rem}}
+.message-bubble{{max-width:85%;padding:0.7rem 1rem;border-radius:18px;font-size:0.85rem;line-height:1.5}}
+.user-msg{{align-self:flex-end;background:#667eea;color:white;border-bottom-right-radius:6px}}
+.bot-msg{{align-self:flex-start;background:#2c2c2e;color:#f5f5f7;border-bottom-left-radius:6px}}
+.chat-suggestions{{display:flex;flex-wrap:wrap;gap:0.5rem;padding:0.5rem 1rem 0}}
+.chat-suggestion{{background:#2c2c2e;color:#f5f5f7;border:1px solid #3a3a3c;border-radius:20px;padding:0.4rem 1rem;font-size:0.8rem;cursor:pointer}}
+.chat-suggestion:hover{{background:#3a3a3c}}
+.chat-input-container{{padding:0.8rem;background:#2c2c2e;display:flex;gap:0.5rem}}
+.chat-input-container input{{flex:1;background:#3a3a3c;border:none;border-radius:25px;padding:0.6rem 1.2rem;color:white;font-size:0.85rem;outline:none}}
+.chat-input-container button{{background:#667eea;border:none;border-radius:50%;width:38px;height:38px;color:white;font-size:1.2rem;cursor:pointer}}
+
+/* Lembretes */
+.reminder-card{{background:#1c1c1e;padding:1rem;border-radius:12px;margin-bottom:0.5rem;display:flex;align-items:center;justify-content:space-between}}
+.reminder-overdue{{border-left:4px solid #ff453a}}
+.reminder-pending{{border-left:4px solid #ff9f0a}}
+.reminder-paid{{border-left:4px solid #30d158;opacity:0.7}}
+[data-testid="stSidebar"]{{background:#1c1c1e}}
+[data-testid="stSidebar"] h3{{color:#f5f5f7}}
+</style>
+""".replace("{{{{","{").replace("}}}}","}"), unsafe_allow_html=True)
+
+# ========== FUNÇÕES AUX ==========
+def insights():
+    if not transactions: return []
+    df = pd.DataFrame(transactions); df['date'] = pd.to_datetime(df['date'])
+    exp = df[df['type'] == 'expense']
+    if exp.empty: return [t("no_expenses")]
+    ins = []
+    top = exp.groupby('category')['value'].sum().idxmax()
+    ins.append(f"Sua maior categoria de gasto é **{top}**.")
     now = datetime.now()
-    this_month = now.month
-    prev_month = this_month - 1 if this_month > 1 else 12
-    this_month_exp = expense_df[expense_df['date'].dt.month == this_month]['value'].sum()
-    prev_month_exp = expense_df[expense_df['date'].dt.month == prev_month]['value'].sum()
-    if prev_month_exp > 0 and this_month_exp > prev_month_exp:
-        diff = ((this_month_exp - prev_month_exp) / prev_month_exp) * 100
-        insights.append(f"{t('insight_spending_increase')} **{diff:.1f}%**.")
-    for cat, limit in budgets.items():
-        spent = expense_df[expense_df['category'] == cat]['value'].sum()
-        if limit > 0 and spent > limit * 0.8:
-            insights.append(f"{t('insight_budget_warning')} **{cat}**.")
-    if len(expense_df) > 10:
-        insights.append(t("insight_frequency"))
-    return insights[:5]
+    this = exp[exp['date'].dt.month == now.month]['value'].sum()
+    prev = exp[exp['date'].dt.month == (now.month-1 if now.month>1 else 12)]['value'].sum()
+    if prev > 0 and this > prev:
+        ins.append(f"Gastos aumentaram **{((this-prev)/prev)*100:.1f}%** em relação ao mês anterior.")
+    for cat, lim in budgets.items():
+        spent = exp[exp['category'] == cat]['value'].sum()
+        if lim > 0 and spent > lim*0.8:
+            ins.append(f"Você já usou mais de 80% do orçamento de **{cat}**.")
+    if len(exp) > 10: ins.append("Muitas transações este mês. Revise pequenos gastos.")
+    return ins[:5]
 
 def export_pdf(lang):
-    if not transactions:
-        return None
-    sym_lang = TEXT[lang]["currency_symbol"]
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", style='B', size=16)
-    pdf.cell(0, 10, txt="FinBot - Relatório Financeiro" if lang == "pt" else "FinBot - Financial Report", ln=True, align='C')
-    pdf.ln(5)
-    pdf.set_font("Arial", size=10)
-    pdf.cell(0, 8, txt=f"{TEXT[lang]['pdf_balance']}: {sym_lang} {balance:,.2f}", ln=True)
-    pdf.cell(0, 8, txt=f"{TEXT[lang]['pdf_income']}: {sym_lang} {income_total:,.2f}", ln=True)
-    pdf.cell(0, 8, txt=f"{TEXT[lang]['pdf_expense']}: {sym_lang} {expense_total:,.2f}", ln=True)
-    pdf.ln(5)
-    pdf.set_font("Arial", style='B', size=12)
-    pdf.cell(0, 10, txt=TEXT[lang]["pdf_recent_transactions"], ln=True)
-    pdf.set_font("Arial", size=9)
-    col_widths = [30, 50, 30, 30, 30]
-    header = [TEXT[lang]["date"], TEXT[lang]["description"], TEXT[lang]["type"], TEXT[lang]["category"], TEXT[lang]["amount"]]
-    for i, h in enumerate(header):
-        pdf.cell(col_widths[i], 7, txt=h, border=1)
-    pdf.ln()
+    if not transactions: return None
+    s = T[lang]["currency"]
+    pdf = FPDF(); pdf.add_page()
+    pdf.set_font("Arial",'B',16)
+    pdf.cell(0,10,txt="FinBot - Relatório Financeiro" if lang=="pt" else "FinBot - Financial Report",ln=True,align='C')
+    pdf.ln(5); pdf.set_font("Arial",'',10)
+    pdf.cell(0,8,txt=f"{T[lang]['pdf_balance']}: {s} {balance:,.2f}",ln=True)
+    pdf.cell(0,8,txt=f"{T[lang]['pdf_income']}: {s} {income_total:,.2f}",ln=True)
+    pdf.cell(0,8,txt=f"{T[lang]['pdf_expense']}: {s} {expense_total:,.2f}",ln=True)
+    pdf.ln(5); pdf.set_font("Arial",'B',12)
+    pdf.cell(0,10,txt=T[lang]["pdf_recent_transactions"],ln=True)
+    pdf.set_font("Arial",'',9)
     for tx in sorted(transactions, key=lambda x: x['date'], reverse=True)[:20]:
-        date_str = tx['date'].strftime('%d/%m/%Y') if lang == "pt" else tx['date'].strftime('%Y-%m-%d')
-        tipo = "Receita" if tx['type'] == 'income' else "Despesa" if lang == "pt" else "Income" if tx['type'] == 'income' else "Expense"
-        val_str = f"{tx['value']:.2f}"
-        pdf.cell(col_widths[0], 6, txt=date_str, border=1)
-        pdf.cell(col_widths[1], 6, txt=tx['description'][:25], border=1)
-        pdf.cell(col_widths[2], 6, txt=tipo, border=1)
-        pdf.cell(col_widths[3], 6, txt=tx['category'][:15], border=1)
-        pdf.cell(col_widths[4], 6, txt=val_str, border=1)
+        ds = tx['date'].strftime('%d/%m/%Y') if lang=="pt" else tx['date'].strftime('%Y-%m-%d')
+        tipo = "Receita" if tx['type']=='income' else "Despesa" if lang=="pt" else "Income" if tx['type']=='income' else "Expense"
+        pdf.cell(30,6,txt=ds,border=1)
+        pdf.cell(50,6,txt=tx['description'][:25],border=1)
+        pdf.cell(30,6,txt=tipo,border=1)
+        pdf.cell(30,6,txt=tx['category'][:15],border=1)
+        pdf.cell(30,6,txt=f"{tx['value']:.2f}",border=1)
         pdf.ln()
-    pdf.ln(10)
-    pdf.set_font("Arial", size=8)
-    pdf.cell(0, 10, txt=TEXT[lang]["pdf_generated"], ln=True, align='C')
-    pdf_bytes = pdf.output(dest='S').encode('latin-1')
-    b64 = base64.b64encode(pdf_bytes).decode()
-    label = TEXT[lang]["export_pdf_pt"] if lang == "pt" else TEXT[lang]["export_pdf_en"]
-    return f'<a href="data:application/pdf;base64,{b64}" download="finbot_{lang}.pdf" style="color: #f5f5f7; text-decoration: none; background: #2c2c2e; padding: 0.5rem 1rem; border-radius: 8px;">📥 {label}</a>'
+    pdf.ln(10); pdf.set_font("Arial",'',8)
+    pdf.cell(0,10,txt=T[lang]["pdf_generated"],ln=True,align='C')
+    b64 = base64.b64encode(pdf.output(dest='S').encode('latin-1')).decode()
+    return f'<a href="data:application/pdf;base64,{b64}" download="finbot_{lang}.pdf" style="color:#f5f5f7;text-decoration:none;background:#2c2c2e;padding:0.5rem 1rem;border-radius:8px;">📥 {T[lang]["export_pdf_pt"] if lang=="pt" else T[lang]["export_pdf_en"]}</a>'
 
-def offline_chat_response(prompt):
-    df = pd.DataFrame(transactions) if transactions else pd.DataFrame()
-    expense_df = df[df['type'] == 'expense'] if not df.empty else pd.DataFrame()
-    context = f"Saldo atual: {sym} {balance:,.2f}. "
-    if not expense_df.empty:
-        top_cat = expense_df.groupby('category')['value'].sum().idxmax()
-        context += f"Maior gasto: {top_cat}. "
-    if goal:
-        saved = balance if balance > 0 else 0
-        progress = min(saved / goal['amount'] * 100, 100) if goal['amount'] > 0 else 0
-        context += f"Meta: {sym} {goal['amount']:,.2f} ({progress:.1f}%). "
-    p = prompt.lower()
-    if any(w in p for w in ["saldo", "balance", "quanto tenho"]):
-        return f"Seu saldo é {sym} {balance:,.2f}. " + ("Positivo!" if balance >= 0 else "Negativo. Cuidado!")
-    if any(w in p for w in ["gasto", "despesa", "gastei", "spent"]):
-        if expense_df.empty:
-            return "Sem despesas registradas."
-        top = expense_df.groupby('category')['value'].sum().idxmax()
-        total = expense_df['value'].sum()
-        return f"Total gasto: {sym} {total:,.2f}. Maior gasto: {top}."
-    if any(w in p for w in ["economizar", "save", "poupar"]):
-        if expense_df.empty:
-            return "Registre despesas para eu sugerir economia."
-        top = expense_df.groupby('category')['value'].sum().idxmax()
-        return f"Reduza gastos com {top}. Pequenas economias fazem diferença!"
-    if any(w in p for w in ["investir", "invest", "renda"]):
-        return "Invista em renda fixa (Tesouro Direto, CDB). Mantenha reserva de emergência de 6 meses."
-    if any(w in p for w in ["orçamento", "budget"]):
-        if not budgets:
-            return "Defina orçamentos na aba Orçamentos."
-        msg = "Orçamentos:\n"
-        for cat, limit in budgets.items():
-            spent = expense_df[expense_df['category'] == cat]['value'].sum() if not expense_df.empty else 0
-            pct = (spent / limit) * 100 if limit > 0 else 0
-            msg += f"- {cat}: {sym} {spent:,.2f} de {sym} {limit:,.2f} ({pct:.0f}%)\n"
-        return msg
-    if any(w in p for w in ["meta", "goal"]):
-        if not goal:
-            return "Nenhuma meta definida. Vá em Metas."
-        saved = balance if balance > 0 else 0
-        progress = min(saved / goal['amount'] * 100, 100) if goal['amount'] > 0 else 0
-        days_left = max((goal['deadline'] - datetime.now().date()).days, 0)
-        return f"Meta: {sym} {goal['amount']:,.2f}. Progresso: {progress:.1f}%. {days_left} dias restantes."
-    return f"{context}\nPergunte sobre saldo, gastos, economia, investimentos, orçamentos ou metas!"
+def chat_response(prompt, model, key):
+    mem = st.session_state.memory[-5:]
+    ctx = "".join(f"{m['role']}: {m['content']}\n" for m in mem) + f"User: {prompt}\nAssistant:"
+    if model == "Gemini" and key and GEMINI:
+        genai.configure(api_key=key)
+        return genai.GenerativeModel('gemini-pro').generate_content(ctx).text
+    elif model == "ChatGPT" and key and OPENAI:
+        openai.api_key = key
+        msgs = [{"role":"system","content":"Consultor financeiro amigável."}]
+        for m in mem: msgs.append({"role":m['role'],"content":m['content']})
+        msgs.append({"role":"user","content":prompt})
+        return openai.ChatCompletion.create(model="gpt-3.5-turbo",messages=msgs,max_tokens=200).choices[0].message.content
+    else:
+        df = pd.DataFrame(transactions) if transactions else pd.DataFrame()
+        exp = df[df['type']=='expense'] if not df.empty else pd.DataFrame()
+        p = prompt.lower()
+        if any(w in p for w in ["saldo","balance"]): return f"Saldo: {sym} {balance:,.2f}. " + ("Positivo!" if balance>=0 else "Negativo!")
+        if any(w in p for w in ["gasto","despesa","spent"]):
+            if exp.empty: return "Sem despesas."
+            top = exp.groupby('category')['value'].sum().idxmax()
+            return f"Total gasto: {sym} {exp['value'].sum():,.2f}. Maior: {top}."
+        if any(w in p for w in ["economizar","save"]):
+            if exp.empty: return "Registre despesas."
+            top = exp.groupby('category')['value'].sum().idxmax()
+            return f"Reduza gastos com {top}."
+        if any(w in p for w in ["investir","invest"]): return "Invista em renda fixa (Tesouro Direto, CDB). Mantenha reserva de emergência."
+        if any(w in p for w in ["orçamento","budget"]):
+            if not budgets: return "Defina orçamentos na aba Orçamentos."
+            msg = "Orçamentos:\n"
+            for cat, lim in budgets.items():
+                spent = exp[exp['category']==cat]['value'].sum() if not exp.empty else 0
+                msg += f"- {cat}: {sym} {spent:,.2f} de {sym} {lim:,.2f} ({(spent/lim)*100:.0f}%)\n" if lim>0 else f"- {cat}: sem limite\n"
+            return msg
+        if any(w in p for w in ["meta","goal"]):
+            if not goal: return "Nenhuma meta definida."
+            saved = balance if balance>0 else 0
+            prog = min(saved/goal['amount']*100,100) if goal['amount']>0 else 0
+            days = max((goal['deadline']-datetime.now().date()).days,0)
+            return f"Meta: {sym} {goal['amount']:,.2f}. Progresso: {prog:.1f}%. {days} dias restantes."
+        return "Pergunte sobre saldo, gastos, economia, investimentos, orçamentos ou metas!"
 
-def generate_gemini_response(prompt, api_key):
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-pro')
-    context = f"Saldo: {sym} {balance:,.2f}. "
-    if transactions:
-        df = pd.DataFrame(transactions)
-        top_exp = df[df['type']=='expense'].groupby('category')['value'].sum().idxmax() if not df[df['type']=='expense'].empty else "nenhuma"
-        context += f"Maior gasto: {top_exp}. "
-    full_prompt = f"{context}\nUsuário: {prompt}\nAssistente financeiro:"
-    response = model.generate_content(full_prompt)
-    return response.text
-
-def generate_openai_response(prompt, api_key):
-    openai.api_key = api_key
-    context = f"Saldo: {sym} {balance:,.2f}. "
-    if transactions:
-        df = pd.DataFrame(transactions)
-        top_exp = df[df['type']=='expense'].groupby('category')['value'].sum().idxmax() if not df[df['type']=='expense'].empty else "nenhuma"
-        context += f"Maior gasto: {top_exp}. "
-    messages = [
-        {"role": "system", "content": "Você é um consultor financeiro. Dê respostas curtas, práticas e educativas."},
-        {"role": "user", "content": f"{context}\n{prompt}"}
-    ]
-    response = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=messages, max_tokens=200, temperature=0.7)
-    return response.choices[0].message.content.strip()
-
-# ============ INTERFACE PRINCIPAL ============
-col_logo, col_controls = st.columns([4, 1])
-with col_logo:
-    st.markdown(f"""
-    <div class="logo-area">
-        <div class="robot-logo">🤖</div>
-        <div>
-            <h1>{t('title')}</h1>
-            <div class="subtitle">{t('subtitle')}</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-with col_controls:
-    st.markdown('<div class="top-controls">', unsafe_allow_html=True)
-    lang_options = ["Português", "English"]
-    new_lang = st.selectbox("", lang_options, index=0 if st.session_state.lang == "pt" else 1, label_visibility="collapsed", key="lang_select")
-    if (new_lang == "Português" and st.session_state.lang != "pt"):
-        st.session_state.lang = "pt"
-        st.rerun()
-    elif (new_lang == "English" and st.session_state.lang != "en"):
-        st.session_state.lang = "en"
-        st.rerun()
+# ========== INTERFACE ==========
+col1, col2 = st.columns([4,1])
+with col1:
+    st.markdown(f'<div class="logo-area"><div class="robot-logo">🤖</div><div><h1>{t("title")}</h1><div class="subtitle">{t("subtitle")}</div></div></div>', unsafe_allow_html=True)
+with col2:
+    lang = st.selectbox("", ["Português","English"], index=0 if st.session_state.lang=="pt" else 1, label_visibility="collapsed")
+    if (lang=="Português" and st.session_state.lang!="pt") or (lang=="English" and st.session_state.lang!="en"):
+        st.session_state.lang = "pt" if lang=="Português" else "en"; st.rerun()
     if st.button("🚪", help=t("logout")):
-        st.session_state.logged_in = False
-        st.session_state.current_user = None
-        st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
+        supabase.auth.sign_out(); st.session_state.user = None; st.rerun()
 
-# ============ CARDS DE MÉTRICAS ============
-c1, c2, c3 = st.columns(3)
+c1,c2,c3 = st.columns(3)
 with c1:
-    st.markdown(f"""
-    <div class="metric-card income animate-in">
-        <div class="metric-icon">💰</div>
-        <div class="metric-label">{t('income')}</div>
-        <div class="metric-value">{sym} {income_total:,.2f}</div>
-        <div class="metric-sub">{len([tx for tx in transactions if tx['type']=='income'])} {t('transactions')}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-card income animate-in"><div class="metric-icon">💰</div><div class="metric-label">{t("income")}</div><div class="metric-value">{sym} {income_total:,.2f}</div><div class="metric-sub">{len([tx for tx in transactions if tx["type"]=="income"])} {t("transactions")}</div></div>', unsafe_allow_html=True)
 with c2:
-    st.markdown(f"""
-    <div class="metric-card expense animate-in">
-        <div class="metric-icon">💸</div>
-        <div class="metric-label">{t('expenses')}</div>
-        <div class="metric-value">{sym} {expense_total:,.2f}</div>
-        <div class="metric-sub">{len([tx for tx in transactions if tx['type']=='expense'])} {t('transactions')}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f'<div class="metric-card expense animate-in"><div class="metric-icon">💸</div><div class="metric-label">{t("expenses")}</div><div class="metric-value">{sym} {expense_total:,.2f}</div><div class="metric-sub">{len([tx for tx in transactions if tx["type"]=="expense"])} {t("transactions")}</div></div>', unsafe_allow_html=True)
 with c3:
-    bal_color = "#30d158" if balance >= 0 else "#ff453a"
-    st.markdown(f"""
-    <div class="metric-card balance animate-in">
-        <div class="metric-icon">📊</div>
-        <div class="metric-label">{t('balance')}</div>
-        <div class="metric-value" style="color: {bal_color};">{sym} {balance:,.2f}</div>
-        <div class="metric-sub">{t('positive') if balance >= 0 else t('negative')}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
+    cor = "#30d158" if balance>=0 else "#ff453a"
+    st.markdown(f'<div class="metric-card balance animate-in"><div class="metric-icon">📊</div><div class="metric-label">{t("balance")}</div><div class="metric-value" style="color:{cor}">{sym} {balance:,.2f}</div><div class="metric-sub">{t("positive") if balance>=0 else t("negative")}</div></div>', unsafe_allow_html=True)
 st.markdown("<br>", unsafe_allow_html=True)
 
-# ============ ABAS ============
-tab_add, tab_dash, tab_budgets, tab_goals, tab_insights, tab_export, tab_hist = st.tabs([
-    t("tab_add"), t("tab_dashboard"), t("tab_budgets"), t("tab_goals"),
-    t("tab_insights"), t("tab_export"), t("tab_history")
-])
+tabs = st.tabs([t("tab_add"), t("tab_dashboard"), t("tab_budgets"), t("tab_goals"), t("tab_insights"), t("tab_export"), t("tab_reminders"), t("tab_history")])
 
-# ---------- ABA ADICIONAR ----------
-with tab_add:
-    col_form, _ = st.columns([1, 1])
-    with col_form:
+# ABA ADICIONAR
+with tabs[0]:
+    col, _ = st.columns([1,1])
+    with col:
         st.markdown(f'<p class="card-title">{t("new_transaction")}</p>', unsafe_allow_html=True)
-        trans_type_label = st.selectbox(t("type"), [t("type_income"), t("type_expense")])
-        type_code = "income" if trans_type_label == t("type_income") else "expense"
-        description = st.text_input(t("description"), placeholder=t("desc_placeholder"))
-        c_val, c_date = st.columns(2)
-        with c_val:
-            value = st.number_input(t("amount"), min_value=0.01, value=50.00, step=10.0, format="%.2f")
-        with c_date:
-            date = st.date_input(t("date"), value=datetime.now().date())
-        category = st.selectbox(t("category"), t("categories"))
+        tipo = st.selectbox(t("type"), [t("type_income"), t("type_expense")])
+        code = "income" if tipo==t("type_income") else "expense"
+        desc = st.text_input(t("description"), placeholder=t("desc_placeholder"))
+        v, d = st.columns(2)
+        val = v.number_input(t("amount"), min_value=0.01, value=50.0, step=10.0, format="%.2f")
+        date = d.date_input(t("date"), value=datetime.now().date())
+        cat = st.selectbox(t("category"), t("categories"))
         if st.button(t("add_button"), use_container_width=True):
-            if description and value > 0:
-                new_tx = {
-                    'date': datetime.combine(date, datetime.min.time()),
-                    'description': description,
-                    'value': value,
-                    'type': type_code,
-                    'category': category
-                }
-                save_transaction(user_id, new_tx)
-                st.success("Adicionado!" if st.session_state.lang == 'pt' else "Added!")
-                st.rerun()
-            else:
-                st.warning(t("fill_all"))
+            if desc and val>0:
+                save_transaction(uid, {'date':datetime.now(),'description':desc,'value':val,'type':code,'category':cat})
+                st.success("Adicionado!" if st.session_state.lang=='pt' else "Added!"); st.rerun()
+            else: st.warning(t("fill_all"))
 
-# ---------- ABA PAINEL ----------
-with tab_dash:
+# ABA PAINEL
+with tabs[1]:
     if transactions:
-        df = pd.DataFrame(transactions)
-        expense_df = df[df['type'] == 'expense'].copy()
-        if not expense_df.empty:
-            cat_data = expense_df.groupby('category')['value'].sum().sort_values(ascending=True)
-            fig_bar = go.Figure()
-            fig_bar.add_trace(go.Bar(
-                y=cat_data.index, x=cat_data.values, orientation='h',
-                marker=dict(color='#f5f5f7', cornerradius=6, line=dict(width=0)),
-                text=[f'{sym} {v:,.0f}' for v in cat_data.values],
-                textposition='outside', textfont=dict(color='#f5f5f7', family='Inter'),
-                hovertemplate='%{y}: ' + sym + ' %{x:,.2f}<extra></extra>'
-            ))
-            fig_bar.update_layout(
-                showlegend=False, height=350, margin=dict(l=0, r=100, t=20, b=20),
-                xaxis=dict(showgrid=False, showticklabels=False, zeroline=False),
-                yaxis=dict(showgrid=False), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', template='plotly_dark'
-            )
-            st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
-        else:
-            st.info(t("no_expenses"))
+        df = pd.DataFrame(transactions); df['date'] = pd.to_datetime(df['date'])
+        exp = df[df['type']=='expense'].copy()
+        if not exp.empty:
+            exp['date'] = pd.to_datetime(exp['date'])
+            cat_data = exp.groupby('category')['value'].sum().sort_values()
+            fig = go.Figure(go.Bar(y=cat_data.index, x=cat_data.values, orientation='h', marker=dict(color='#f5f5f7',cornerradius=6)))
+            fig.update_layout(height=300, margin=dict(l=0,r=100,t=20,b=20), template='plotly_dark', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar':False})
+        else: st.info(t("no_expenses"))
+        # Comparativo mensal
+        st.markdown(f'<p class="card-title">{t("monthly_comparison")}</p>', unsafe_allow_html=True)
+        df['month'] = df['date'].dt.to_period('M').astype(str)
+        inc_m = df[df['type']=='income'].groupby('month')['value'].sum()
+        exp_m = df[df['type']=='expense'].groupby('month')['value'].sum()
+        meses = sorted(set(list(inc_m.index)+list(exp_m.index)))
+        fig2 = go.Figure()
+        fig2.add_trace(go.Bar(name=t('income'), x=meses, y=[inc_m.get(m,0) for m in meses], marker=dict(color='#30d158')))
+        fig2.add_trace(go.Bar(name=t('expenses'), x=meses, y=[exp_m.get(m,0) for m in meses], marker=dict(color='#ff453a')))
+        fig2.update_layout(barmode='group', height=300, template='plotly_dark', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
+        st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar':False})
+        # Previsão
+        if not exp.empty:
+            st.markdown(f'<p class="card-title">{t("forecast")}</p>', unsafe_allow_html=True)
+            daily = exp.set_index('date').resample('D')['value'].sum().reset_index()
+            daily['num'] = (daily['date']-daily['date'].min()).dt.days
+            if len(daily)>1:
+                from sklearn.linear_model import LinearRegression
+                X = daily['num'].values.reshape(-1,1); y = daily['value'].values
+                model = LinearRegression().fit(X,y)
+                fut = np.arange(0, daily['num'].max()+30).reshape(-1,1)
+                preds = model.predict(fut)
+                fig3 = go.Figure()
+                fig3.add_trace(go.Scatter(x=daily['date'], y=y, mode='lines+markers', name='Gasto diário', line=dict(color='#ff453a')))
+                fig3.add_trace(go.Scatter(x=[daily['date'].min()+timedelta(days=int(d)) for d in fut.flatten()], y=preds, mode='lines', name='Tendência', line=dict(dash='dash',color='#667eea')))
+                fig3.update_layout(height=250, template='plotly_dark', plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
+                st.plotly_chart(fig3, use_container_width=True, config={'displayModeBar':False})
+        # Resumo anual
+        st.markdown(f'<p class="card-title">{t("annual_summary")}</p>', unsafe_allow_html=True)
+        y_inc = df[(df['type']=='income')&(df['date'].dt.year==datetime.now().year)]['value'].sum()
+        y_exp = df[(df['type']=='expense')&(df['date'].dt.year==datetime.now().year)]['value'].sum()
+        y_bal = y_inc - y_exp
+        c1,c2,c3 = st.columns(3)
+        c1.markdown(f'<div class="metric-card income"><div class="metric-label">Receita Anual</div><div class="metric-value">{sym} {y_inc:,.2f}</div></div>', unsafe_allow_html=True)
+        c2.markdown(f'<div class="metric-card expense"><div class="metric-label">Despesa Anual</div><div class="metric-value">{sym} {y_exp:,.2f}</div></div>', unsafe_allow_html=True)
+        c3.markdown(f'<div class="metric-card balance"><div class="metric-label">Saldo Anual</div><div class="metric-value" style="color:{"#30d158" if y_bal>=0 else "#ff453a"}">{sym} {y_bal:,.2f}</div></div>', unsafe_allow_html=True)
+        # Alertas
+        for cat, lim in budgets.items():
+            spent = exp[exp['category']==cat]['value'].sum() if not exp.empty else 0
+            if lim>0 and spent>lim:
+                st.markdown(f'<div class="metric-card expense alert-budget"><div class="metric-label">{t("alert_budget")} {cat}</div><div class="metric-value" style="font-size:1.2rem">{sym} {spent:,.2f} / {sym} {lim:,.2f}</div></div>', unsafe_allow_html=True)
+    else: st.info(t("no_data"))
 
-        col_left, col_right = st.columns(2)
-        with col_left:
-            st.markdown(f'<p class="card-title" style="margin-top:1rem;">{t("summary")}</p>', unsafe_allow_html=True)
-            total_tx = len(transactions)
-            largest_exp = expense_df.loc[expense_df['value'].idxmax()] if not expense_df.empty else None
-            top_cat = cat_data.idxmax() if not expense_df.empty else "-"
-            now = datetime.now()
-            last30 = now - timedelta(days=30)
-            recent_exp = expense_df[expense_df['date'] >= last30] if not expense_df.empty else expense_df
-            daily_avg = recent_exp['value'].sum() / 30 if not recent_exp.empty else 0
-            st.markdown(f"""
-            <div class="summary-grid">
-                <div class="summary-item"><div class="value">{total_tx}</div><div class="label">{t('total_transactions')}</div></div>
-                <div class="summary-item"><div class="value">{sym} {largest_exp['value'] if largest_exp is not None else 0:,.2f}</div><div class="label">{t('largest_expense')}</div></div>
-                <div class="summary-item"><div class="value">{top_cat}</div><div class="label">{t('top_category')}</div></div>
-                <div class="summary-item"><div class="value">{sym} {daily_avg:,.2f}</div><div class="label">{t('daily_average')}</div></div>
-            </div>
-            """, unsafe_allow_html=True)
-        with col_right:
-            st.markdown(f'<p class="card-title" style="margin-top:1rem;">{t("trend")}</p>', unsafe_allow_html=True)
-            if not expense_df.empty:
-                expense_df['date_only'] = expense_df['date'].dt.date
-                last7 = now - timedelta(days=7)
-                trend_df = expense_df[expense_df['date'] >= last7].groupby('date_only')['value'].sum().reset_index()
-                if not trend_df.empty:
-                    all_dates = pd.date_range(start=last7.date(), end=now.date(), freq='D')
-                    trend_df = trend_df.set_index('date_only').reindex(all_dates.date, fill_value=0).reset_index()
-                    trend_df.columns = ['date', 'value']
-                    fig_line = px.line(trend_df, x='date', y='value', markers=True, color_discrete_sequence=['#667eea'], template='plotly_dark')
-                    fig_line.update_traces(line=dict(width=2), marker=dict(size=6))
-                    fig_line.update_layout(showlegend=False, height=250, margin=dict(l=0, r=20, t=20, b=20),
-                                           xaxis=dict(showgrid=False, tickfont=dict(color='#f5f5f7')),
-                                           yaxis=dict(showgrid=False, tickfont=dict(color='#f5f5f7')),
-                                           plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
-                    st.plotly_chart(fig_line, use_container_width=True, config={'displayModeBar': False})
-                else: st.info(t("no_data"))
-            else: st.info(t("no_data"))
-    else:
-        st.info(t("no_data"))
-
-# ---------- ABA ORÇAMENTOS ----------
-with tab_budgets:
+# ABA ORÇAMENTOS
+with tabs[2]:
     st.markdown(f'<p class="card-title">{t("budget_title")}</p>', unsafe_allow_html=True)
-    expense_categories = [cat for cat in t("categories") if cat not in ["Salário", "Salary"]]
-    col1, col2, col3 = st.columns([2, 2, 1])
-    with col1:
-        selected_cat = st.selectbox(t("category_select"), expense_categories, key="budget_cat")
-    with col2:
-        budget_value = st.number_input(f"{t('set_budget')} ({sym})", min_value=0.0, value=500.0, step=50.0, format="%.2f", key="budget_val")
-    with col3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("➕", key="add_budget_btn"):
-            save_budget(user_id, selected_cat, budget_value)
-            st.success(t("budget_added"))
-            st.rerun()
+    cats = [c for c in t("categories") if c not in ["Salário","Salary"]]
+    c1,c2,c3 = st.columns([2,2,1])
+    sel = c1.selectbox(t("category_select"), cats, key="bcat")
+    lim = c2.number_input(f"{t('set_budget')} ({sym})", min_value=0.0, value=500.0, step=50.0, format="%.2f", key="bval")
+    if c3.button("➕", key="addb"):
+        save_budget(uid, sel, lim)
+        st.success(t("budget_added")); st.rerun()
     st.markdown("---")
-    if not budgets:
-        st.info(t("no_budgets"))
+    if not budgets: st.info(t("no_budgets"))
     else:
         df_exp = pd.DataFrame(transactions) if transactions else pd.DataFrame()
-        current_spending = {}
-        if not df_exp.empty:
-            df_exp = df_exp[df_exp['type'] == 'expense']
-            current_spending = df_exp.groupby('category')['value'].sum().to_dict()
-        for cat, limit in budgets.items():
-            spent = current_spending.get(cat, 0)
-            percent = min(spent / limit * 100, 100) if limit > 0 else 100
-            color = "#30d158" if percent < 50 else "#ff9f0a" if percent < 80 else "#ff453a"
-            status = t("on_track") if percent < 50 else t("watch_out") if percent < 80 else t("over_budget")
-            st.markdown(f"""
-            <div class="budget-card animate-in">
-                <div class="budget-header"><span class="budget-category">{cat}</span><span style="color: {color}; font-weight: 600;">{status}</span></div>
-                <div style="color: #86868b;">{t('current_spending')}: {sym} {spent:,.2f} | {t('remaining')}: {sym} {limit - spent:,.2f}</div>
-                <div class="progress-bar-container"><div class="progress-bar-fill" style="width: {percent}%; background: {color};"></div></div>
-                <div style="text-align: right; font-size: 0.8rem; color: #86868b;">{percent:.1f}%</div>
-            </div>
-            """, unsafe_allow_html=True)
-    if st.button(t("clear_budgets")):
-        delete_all_budgets_db(user_id)
-        st.rerun()
+        cur = df_exp[df_exp['type']=='expense'].groupby('category')['value'].sum().to_dict() if not df_exp.empty else {}
+        for cat, lim in budgets.items():
+            spent = cur.get(cat,0)
+            pct = min(spent/lim*100,100) if lim>0 else 100
+            cor = "#30d158" if pct<50 else "#ff9f0a" if pct<80 else "#ff453a"
+            st.markdown(f'<div class="budget-card animate-in"><div class="budget-header"><span class="budget-category">{cat}</span><span style="color:{cor}">{t("on_track") if pct<50 else t("watch_out") if pct<80 else t("over_budget")}</span></div><div style="color:#86868b">{t("current_spending")}: {sym} {spent:,.2f} | {t("remaining")}: {sym} {lim-spent:,.2f}</div><div class="progress-bar-container"><div class="progress-bar-fill" style="width:{pct}%;background:{cor}"></div></div><div style="text-align:right;font-size:0.8rem;color:#86868b">{pct:.1f}%</div></div>', unsafe_allow_html=True)
+        if st.button(t("clear_budgets")):
+            clear_budgets(uid); st.rerun()
 
-# ---------- ABA METAS ----------
-with tab_goals:
+# ABA METAS
+with tabs[3]:
     st.markdown(f'<p class="card-title">{t("goal_title")}</p>', unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([2, 2, 1])
-    with col1:
-        goal_amount = st.number_input(f"{t('goal_amount')} ({sym})", min_value=0.0, value=1000.0, step=100.0, format="%.2f", key="goal_amount_input")
-    with col2:
-        goal_deadline = st.date_input(t("goal_deadline"), min_value=datetime.now().date(), key="goal_deadline_input")
-    with col3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button(t("goal_set"), key="set_goal_btn"):
-            save_goal(user_id, goal_amount, goal_deadline)
-            st.success(t("goal_set_success"))
-            st.rerun()
+    c1,c2,c3 = st.columns([2,2,1])
+    amt = c1.number_input(f"{t('goal_amount')} ({sym})", min_value=0.0, value=1000.0, step=100.0, format="%.2f", key="gamt")
+    dead = c2.date_input(t("goal_deadline"), min_value=datetime.now().date(), key="gdead")
+    if c3.button(t("goal_set"), key="setg"):
+        save_goal(uid, amt, dead); st.success(t("goal_set_success")); st.rerun()
     if goal:
-        saved = balance if balance > 0 else 0
-        progress = min(saved / goal['amount'] * 100, 100) if goal['amount'] > 0 else 100
-        days_left = max((goal['deadline'] - datetime.now().date()).days, 0)
-        color = "#30d158" if progress >= 100 else "#ff9f0a" if progress > 50 else "#ff453a"
-        st.markdown(f"""
-        <div class="budget-card animate-in">
-            <div class="budget-header"><span class="budget-category">{t('goal_progress')}</span><span style="color: {color}; font-weight: 600;">{progress:.1f}%</span></div>
-            <div style="color: #86868b;">{t('goal_current')}: {sym} {saved:,.2f} / {sym} {goal['amount']:,.2f}</div>
-            <div style="color: #86868b;">Prazo: {goal['deadline'].strftime('%d/%m/%Y')} ({days_left} dias restantes)</div>
-            <div class="progress-bar-container"><div class="progress-bar-fill" style="width: {progress}%; background: {color};"></div></div>
-        </div>
-        """, unsafe_allow_html=True)
-        if st.button(t("goal_reset")):
-            delete_goal_db(user_id)
-            st.rerun()
+        saved = balance if balance>0 else 0
+        prog = min(saved/goal['amount']*100,100) if goal['amount']>0 else 100
+        days = max((goal['deadline']-datetime.now().date()).days,0)
+        cor = "#30d158" if prog>=100 else "#ff9f0a" if prog>50 else "#ff453a"
+        st.markdown(f'<div class="budget-card animate-in"><div class="budget-header"><span class="budget-category">{t("goal_progress")}</span><span style="color:{cor}">{prog:.1f}%</span></div><div style="color:#86868b">{t("goal_current")}: {sym} {saved:,.2f} / {sym} {goal["amount"]:,.2f}</div><div style="color:#86868b">Prazo: {goal["deadline"].strftime("%d/%m/%Y")} ({days} dias restantes)</div><div class="progress-bar-container"><div class="progress-bar-fill" style="width:{prog}%;background:{cor}"></div></div></div>', unsafe_allow_html=True)
+        if st.button(t("goal_reset")): delete_goal(uid); st.rerun()
 
-# ---------- ABA INSIGHTS ----------
-with tab_insights:
+# ABA INSIGHTS
+with tabs[4]:
     st.markdown(f'<p class="card-title">{t("insights_title")}</p>', unsafe_allow_html=True)
-    insights = generate_insights()
-    if insights:
-        for insight in insights:
-            st.markdown(f'<div class="budget-card animate-in" style="padding: 1rem;"><div style="color: #f5f5f7;">{insight}</div></div>', unsafe_allow_html=True)
-    else:
-        st.info(t("no_data"))
+    ins = insights()
+    if ins:
+        for i in ins: st.markdown(f'<div class="budget-card animate-in" style="padding:1rem"><div style="color:#f5f5f7">{i}</div></div>', unsafe_allow_html=True)
+    else: st.info(t("no_data"))
 
-# ---------- ABA EXPORTAR ----------
-with tab_export:
+# ABA EXPORTAR
+with tabs[5]:
     st.markdown(f'<p class="card-title">{t("export_title")}</p>', unsafe_allow_html=True)
     if transactions:
-        col1, col2 = st.columns(2)
-        with col1: st.markdown(export_pdf("pt"), unsafe_allow_html=True)
-        with col2: st.markdown(export_pdf("en"), unsafe_allow_html=True)
-    else:
-        st.warning(t("no_transactions"))
+        c1,c2 = st.columns(2)
+        c1.markdown(export_pdf("pt"), unsafe_allow_html=True)
+        c2.markdown(export_pdf("en"), unsafe_allow_html=True)
+    else: st.warning(t("no_transactions"))
 
-# ---------- ABA HISTÓRICO ----------
-with tab_hist:
+# ABA LEMBRETES
+with tabs[6]:
+    st.markdown(f'<p class="card-title">{t("reminder_title")}</p>', unsafe_allow_html=True)
+    c1,c2,c3,c4 = st.columns([3,2,2,1])
+    desc = c1.text_input(t("reminder_description"), key="rdesc")
+    amt_r = c2.number_input(t("reminder_amount"), min_value=0.01, value=50.0, step=10.0, format="%.2f", key="ramt")
+    due_r = c3.date_input(t("reminder_due_date"), value=datetime.now().date(), key="rdue")
+    if c4.button("➕", key="addr"):
+        save_reminder(uid, desc, amt_r, due_r); st.rerun()
+    st.markdown("---")
+    if reminders:
+        for rem in reminders:
+            due = rem['due_date']; paid = rem['paid']
+            days = (due - datetime.now().date()).days
+            if paid: cls, emoji = "reminder-paid", "✅"
+            elif days<0: cls, emoji = "reminder-overdue", "🔴"
+            else: cls, emoji = "reminder-pending", "🟡"
+            c1,c2 = st.columns([10,1])
+            with c1:
+                st.markdown(f'<div class="reminder-card {cls}"><div><span style="font-weight:500">{rem["description"]}</span><br><span style="color:#86868b;font-size:0.8rem">{t("reminder_amount")}: {sym} {rem["amount"]:.2f} | {t("date")}: {due.strftime("%d/%m/%Y")} ({days} dias)</span></div><div><span style="font-size:1.2rem">{emoji}</span></div></div>', unsafe_allow_html=True)
+            with c2:
+                if st.button("✓" if not paid else "↩", key=f"pay_{rem['id']}"):
+                    toggle_reminder(rem['id'], not paid); st.rerun()
+                if st.button("🗑️", key=f"delr_{rem['id']}"):
+                    delete_reminder(rem['id']); st.rerun()
+        if st.button(t("clear_reminders")): clear_reminders(uid); st.rerun()
+    else: st.info(t("no_reminders"))
+
+# Notificação toast
+if reminders:
+    ovd = [r for r in reminders if r['due_date']<datetime.now().date() and not r['paid']]
+    if ovd: st.toast(f"⚠️ Você tem {len(ovd)} contas vencidas!", icon="🔔")
+
+# ABA HISTÓRICO
+with tabs[7]:
     if transactions:
         for tx in sorted(transactions, key=lambda x: x['date'], reverse=True):
-            amt_class = "income" if tx['type'] == 'income' else "expense"
-            sign = "+" if tx['type'] == 'income' else "-"
-            date_str = tx['date'].strftime('%d/%m/%Y %H:%M') if st.session_state.lang == 'pt' else tx['date'].strftime('%b %d, %H:%M')
-            cat_images = {
-                "Salary": "💰", "Food": "🍔", "Transport": "🚌", "Housing": "🏠",
-                "Leisure": "🎮", "Health": "💊", "Education": "📚", "Investment": "📈", "Other": "📦",
-                "Salário": "💰", "Alimentação": "🍕", "Transporte": "🚗", "Moradia": "🏡",
-                "Lazer": "🎬", "Saúde": "🩺", "Educação": "🎓", "Investimento": "💹", "Outros": "📌"
-            }
-            img = cat_images.get(tx['category'], "💲")
-            col_info, col_del = st.columns([10, 1])
-            with col_info:
-                st.markdown(f"""
-                <div class="tx-row">
-                    <div class="tx-left"><div class="tx-img">{img}</div><div><div class="tx-name">{tx['description']}</div><div class="tx-cat">{tx['category']}</div></div></div>
-                    <div><div class="tx-amount {amt_class}">{sign}{sym} {tx['value']:,.2f}</div><div class="tx-date">{date_str}</div></div>
-                </div>
-                """, unsafe_allow_html=True)
-            with col_del:
-                if st.button("🗑️", key=f"del_{tx['id']}"):
-                    delete_transaction_db(tx['id'])
-                    st.rerun()
-    else:
-        st.info(t("no_transactions"))
+            cls = "income" if tx['type']=='income' else "expense"
+            sign = "+" if tx['type']=='income' else "-"
+            ds = tx['date'].strftime('%d/%m/%Y %H:%M') if st.session_state.lang=='pt' else tx['date'].strftime('%b %d, %H:%M')
+            icons = {"Salary":"💰","Food":"🍔","Transport":"🚌","Housing":"🏠","Leisure":"🎮","Health":"💊","Education":"📚","Investment":"📈","Other":"📦","Salário":"💰","Alimentação":"🍕","Transporte":"🚗","Moradia":"🏡","Lazer":"🎬","Saúde":"🩺","Educação":"🎓","Investimento":"💹","Outros":"📌"}
+            img = icons.get(tx['category'],"💲")
+            ci, cd = st.columns([10,1])
+            with ci:
+                st.markdown(f'<div class="tx-row"><div class="tx-left"><div class="tx-img">{img}</div><div><div class="tx-name">{tx["description"]}</div><div class="tx-cat">{tx["category"]}</div></div></div><div><div class="tx-amount {cls}">{sign}{sym} {tx["value"]:,.2f}</div><div class="tx-date">{ds}</div></div></div>', unsafe_allow_html=True)
+            with cd:
+                if st.button("🗑️", key=f"del_{tx['id']}"): delete_transaction(tx['id']); st.rerun()
+    else: st.info(t("no_transactions"))
 
-# ============ CHAT FLUTUANTE ============
-st.markdown("""
-<button class="chat-fab" id="chatFab">
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-    </svg>
-</button>
-""", unsafe_allow_html=True)
-
+# ========== CHAT ==========
+st.markdown('<button class="chat-fab" id="chatFab"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="9" cy="10" r="1.5" fill="white"/><circle cx="15" cy="10" r="1.5" fill="white"/></svg></button>', unsafe_allow_html=True)
 st.markdown("""
 <script>
 const fab = document.getElementById('chatFab');
 const popup = document.getElementById('chatPopup');
 fab.addEventListener('click', () => {
-    if (popup.style.display === 'flex') {
-        popup.style.display = 'none';
-    } else {
-        popup.style.display = 'flex';
-    }
+    if (popup.style.display === 'flex') { popup.style.display = 'none'; }
+    else { popup.style.display = 'flex'; }
 });
 </script>
 """, unsafe_allow_html=True)
 
-if st.session_state.show_chat:
-    st.markdown('<div class="chat-popup" id="chatPopup" style="display: flex;">', unsafe_allow_html=True)
-else:
-    st.markdown('<div class="chat-popup" id="chatPopup" style="display: none;">', unsafe_allow_html=True)
-
-st.markdown(f'<div class="chat-header"><span>{t("chat_title")}</span><span style="cursor:pointer;" onclick="document.getElementById(\'chatPopup\').style.display=\'none\'">✕</span></div>', unsafe_allow_html=True)
+disp = 'flex' if st.session_state.show_chat else 'none'
+st.markdown(f'<div class="chat-popup" id="chatPopup" style="display:{disp}">', unsafe_allow_html=True)
+st.markdown(f'<div class="chat-header"><span>{t("chat_title")}</span><span style="cursor:pointer" onclick="document.getElementById(\'chatPopup\').style.display=\'none\'">✕</span></div>', unsafe_allow_html=True)
 st.markdown('<div class="chat-body">', unsafe_allow_html=True)
-
 for msg in chat_history:
-    css_class = "user-msg" if msg["role"] == "user" else "bot-msg"
-    st.markdown(f'<div class="message-bubble {css_class}">{msg["content"]}</div>', unsafe_allow_html=True)
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-st.markdown('<div class="chat-input-container">', unsafe_allow_html=True)
-with st.form(key="chat_form", clear_on_submit=True):
-    cols = st.columns([5, 1])
-    with cols[0]:
-        user_input = st.text_input("", placeholder=t("chat_placeholder"), label_visibility="collapsed", key="chat_input")
-    with cols[1]:
-        submitted = st.form_submit_button("➤")
-    if submitted and user_input:
-        save_chat_message(user_id, "user", user_input)
-        model = st.session_state.chat_model
-        api_key = st.session_state.get("gemini_key", "") or st.session_state.get("openai_key", "")
-        if model == "Gemini" and api_key and GEMINI_AVAILABLE:
-            try:
-                response = generate_gemini_response(user_input, api_key)
-            except Exception as e:
-                response = f"Erro Gemini: {str(e)}"
-        elif model == "ChatGPT" and api_key and OPENAI_AVAILABLE:
-            try:
-                response = generate_openai_response(user_input, api_key)
-            except Exception as e:
-                response = f"Erro OpenAI: {str(e)}"
-        else:
-            response = offline_chat_response(user_input)
-        save_chat_message(user_id, "assistant", response)
+    cls = "user-msg" if msg["role"]=="user" else "bot-msg"
+    st.markdown(f'<div class="message-bubble {cls}">{msg["content"]}</div>', unsafe_allow_html=True)
+st.markdown('<div class="chat-suggestions">', unsafe_allow_html=True)
+for sug in t("chat_suggestions"):
+    if st.button(sug, key=f"sug_{sug}"):
+        st.session_state.memory.append({"role":"user","content":sug})
+        save_chat(uid, "user", sug)
+        resp = chat_response(sug, st.session_state.chat_model, st.session_state.get("gkey","") or st.session_state.get("okey",""))
+        st.session_state.memory.append({"role":"assistant","content":resp})
+        save_chat(uid, "assistant", resp)
         st.rerun()
-st.markdown('</div>', unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('</div></div>', unsafe_allow_html=True)
+st.markdown('<div class="chat-input-container">', unsafe_allow_html=True)
+with st.form(key="cform", clear_on_submit=True):
+    c1,c2 = st.columns([5,1])
+    inp = c1.text_input("", placeholder=t("chat_placeholder"), label_visibility="collapsed", key="cinp")
+    if c2.form_submit_button("➤") and inp:
+        st.session_state.memory.append({"role":"user","content":inp})
+        save_chat(uid, "user", inp)
+        resp = chat_response(inp, st.session_state.chat_model, st.session_state.get("gkey","") or st.session_state.get("okey",""))
+        st.session_state.memory.append({"role":"assistant","content":resp})
+        save_chat(uid, "assistant", resp)
+        st.rerun()
+st.markdown('</div></div>', unsafe_allow_html=True)
 
-# Configuração do chat na barra lateral
 with st.sidebar:
     st.markdown("### Configuração do Chat")
-    st.session_state.chat_model = st.selectbox(t("chat_model_label"), ["Offline", "Gemini", "ChatGPT"], index=0)
-    if st.session_state.chat_model == "Gemini":
-        st.session_state.gemini_key = st.text_input(t("gemini_key_label"), type="password")
-    elif st.session_state.chat_model == "ChatGPT":
-        st.session_state.openai_key = st.text_input(t("openai_key_label"), type="password")
-    if st.button(t("clear_chat_history")):
-        clear_chat_history_db(user_id)
-        st.rerun()
+    st.session_state.chat_model = st.selectbox("Modelo", ["Offline","Gemini","ChatGPT"], index=0)
+    if st.session_state.chat_model == "Gemini": st.session_state.gkey = st.text_input("Chave Gemini", type="password")
+    elif st.session_state.chat_model == "ChatGPT": st.session_state.okey = st.text_input("Chave OpenAI", type="password")
+    if st.button("Limpar histórico"): clear_chat(uid); st.session_state.memory = []; st.rerun()
 
-st.markdown(f"""
-<div style="text-align: center; color: #6d6d72; font-size: 0.7rem; padding: 2rem 0 1rem 0;">
-    {t("footer")}
-</div>
-""", unsafe_allow_html=True)
+st.markdown(f'<div style="text-align:center;color:#6d6d72;font-size:0.7rem;padding:2rem 0 1rem 0">{t("footer")}</div>', unsafe_allow_html=True)

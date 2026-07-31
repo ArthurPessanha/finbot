@@ -1,0 +1,9 @@
+{
+  "name": "FinBot",
+  "short_name": "FinBot",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#667eea",
+  "icons": [{"src": "https://img.icons8.com/emoji/96/robot-emoji.png", "sizes": "96x96", "type": "image/png"}]
+}
